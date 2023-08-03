@@ -9,6 +9,7 @@
     "pods": "pod-install --quiet"
   },
   "dependencies": {
+    "@elemaudio/core": "^2.0.1",
     "react": "18.2.0",
     "react-native": "0.72.3"
   },
