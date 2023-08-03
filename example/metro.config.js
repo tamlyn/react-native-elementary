@@ -20,10 +20,15 @@ const config = {
   // So we block them at the root, and alias them to the versions in example's node_modules
   resolver: {
     blacklistRE: exclusionList(
-      modules.map(
-        (m) =>
-          new RegExp(`^${escape(path.join(root, 'node_modules', m))}\\/.*$`)
-      )
+      modules
+        .map(
+          (m) =>
+            new RegExp(`^${escape(path.join(root, 'node_modules', m))}\\/.*$`)
+        )
+        .concat(
+          // TODO why do I have to exclude this?
+          new RegExp(`^${escape(path.join(root, 'ios/vendor/elementary/'))}.*$`)
+        )
     ),
 
     extraNodeModules: modules.reduce((acc, name) => {

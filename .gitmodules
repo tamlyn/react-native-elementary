@@ -1,0 +1,3 @@
+[submodule "ios/vendor/elementary"]
+	path = ios/vendor/elementary
+	url = https://github.com/elemaudio/elementary.git

@@ -24,23 +24,23 @@ RCT_EXPORT_MODULE();
             AVAudioFrameCount frameCount,
             AudioBufferList * _Nonnull audioBufferList) {
 
-//         if (self.runtime == nullptr) {
-//             // If the runtime is not initialized, return without processing the audio
-//             return noErr;
-//         }
-//
-//         for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
-//           outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;;
-//         }
-//
-//         self.runtime->process(
-//             inputBuffer,
-//             numOutputChannels,
-//             outputBuffer,
-//             numOutputChannels,
-//             frameCount,
-//             nullptr
-//         );
+        if (self.runtime == nullptr) {
+            // If the runtime is not initialized, return without processing the audio
+            return noErr;
+        }
+
+        for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
+          outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;;
+        }
+
+        self.runtime->process(
+            inputBuffer,
+            numOutputChannels,
+            outputBuffer,
+            numOutputChannels,
+            frameCount,
+            nullptr
+        );
 
         return noErr;
     }];
@@ -56,7 +56,7 @@ RCT_EXPORT_MODULE();
 
     // TODO how do I get the frame count from the AVAudioEngine?
     int bufferSize = 512;
-//     self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
+    self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
 
     NSLog(@"Started engine and initialised runtime");
   }
@@ -70,7 +70,7 @@ RCT_EXPORT_MODULE();
 RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 {
   NSLog(@"Applying graph: %@", message);
-//   self.runtime->applyInstructions(elem::js::parseJSON([message UTF8String]));
+  self.runtime->applyInstructions(elem::js::parseJSON([message UTF8String]));
 }
 
 RCT_EXPORT_METHOD(getSampleRate:

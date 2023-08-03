@@ -1,5 +1,6 @@
 import { NativeModules, Platform } from 'react-native';
 import { Renderer } from '@elemaudio/core';
+import { useEffect, useRef, useState } from 'react';
 
 const LINKING_ERROR =
   `The package 'react-native-elementary' doesn't seem to be linked. Make sure: \n\n` +
@@ -25,8 +26,22 @@ export function getSampleRate(): Promise<number> {
 
 export class NativeRenderer extends Renderer {
   constructor(sampleRate: number) {
-    super(sampleRate, (instructions: string) => {
-      Elementary.applyInstructions(instructions);
+    super(sampleRate, (instructions: unknown) => {
+      Elementary.applyInstructions(JSON.stringify(instructions));
     });
   }
+}
+
+export function useRenderer(): { core: Renderer | undefined } {
+  const [_loading, setLoading] = useState(true);
+  const ref = useRef<NativeRenderer>();
+
+  useEffect(() => {
+    getSampleRate().then((sampleRate) => {
+      ref.current = new NativeRenderer(sampleRate);
+      setLoading(false);
+    });
+  }, []);
+
+  return { core: ref.current };
 }
