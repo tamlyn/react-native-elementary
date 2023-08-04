@@ -108,6 +108,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          submodules: recursive
 
       - name: Setup
         uses: ./.github/actions/setup
@@ -140,16 +142,11 @@ jobs:
             ${{ runner.os }}-cocoapods-
 
       - name: Install cocoapods
-        if: env.turbo_cache_hit != 1 && steps.cocoapods-cache.outputs.cache-hit != 'true'
+#        if: env.turbo_cache_hit != 1 && steps.cocoapods-cache.outputs.cache-hit != 'true'
         run: |
           yarn example pods
         env:
           NO_FLIPPER: 1
-
-      - name: Initialise git submodules
-        if: env.turbo_cache_hit != 1
-        run: |
-          git submodule update --init --recursive
 
       - name: Build example for iOS
         run: |
