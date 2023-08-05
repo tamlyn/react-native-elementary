@@ -4,10 +4,12 @@ pre-commit:
     lint:
       files: git diff --name-only @{push}
       glob: "*.{js,ts,jsx,tsx}"
+      exclude: ios/vendor
       run: npx eslint {files}
     types:
       files: git diff --name-only @{push}
       glob: "*.{js,ts, jsx, tsx}"
+      exclude: ios/vendor
       run: npx tsc --noEmit
 commit-msg:
   parallel: true

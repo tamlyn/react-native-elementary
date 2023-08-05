@@ -1,6 +1,10 @@
 # react-native-elementary
 
-Use Elementary Audio in your React Native app
+> Use [Elementary Audio][elem] in your React Native app
+
+This is alpha quality software. **iOS only for now**, PRs welcome for Android support.
+
+[elem]: https://elementary.audio
 
 ## Installation
 
@@ -10,12 +14,26 @@ npm install react-native-elementary
 
 ## Usage
 
-```js
-import { multiply } from 'react-native-elementary';
+```jsx
+import { el } from '@elemaudio/core';
+import { useRenderer } from 'react-native-elementary';
 
-// ...
+const MyComponent = () => {
+  const { core } = useRenderer();
 
-const result = await multiply(3, 7);
+  if (!core) {
+    return <Text>Initialising audio...</Text>;
+  }
+
+  return (
+    <View>
+      <Button
+        title="Play"
+        onPress={() => core.render(el.cycle(440), el.cycle(441))}
+      />
+    </View>
+  );
+};
 ```
 
 ## Contributing

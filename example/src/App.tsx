@@ -1,18 +1,28 @@
 import * as React from 'react';
 
-import { StyleSheet, View, Text } from 'react-native';
-import { multiply } from 'react-native-elementary';
+import { StyleSheet, View, Text, Button } from 'react-native';
+import { useRenderer } from 'react-native-elementary';
+import { el } from '@elemaudio/core';
 
 export default function App() {
-  const [result, setResult] = React.useState<number | undefined>();
+  const { core } = useRenderer();
 
-  React.useEffect(() => {
-    multiply(3, 7).then(setResult);
-  }, []);
+  if (!core) {
+    return (
+      <View style={styles.container}>
+        <Text>Initialising audio...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
-      <Text>Result: {result}</Text>
+      <Text>Audio engine initialised</Text>
+      <Button
+        title="Play test tone"
+        onPress={() => core.render(el.cycle(440), el.cycle(440))}
+      />
+      <Button title="Stop" onPress={() => core.render()} />
     </View>
   );
 }
@@ -22,10 +32,5 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  box: {
-    width: 60,
-    height: 60,
-    marginVertical: 20,
   },
 });

@@ -1,6 +1,6 @@
 {
   "name": "react-native-elementary",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "Use Elementary Audio in your React Native app",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
@@ -16,6 +16,8 @@
     "*.podspec",
     "!lib/typescript/example",
     "!ios/build",
+    "!ios/vendor",
+    "ios/vendor/elementary/runtime",
     "!android/build",
     "!android/gradle",
     "!android/gradlew",
@@ -55,6 +57,7 @@
   },
   "devDependencies": {
     "@commitlint/config-conventional": "^17.0.2",
+    "@elemaudio/core": "^2.0.1",
     "@evilmartians/lefthook": "^1.2.2",
     "@react-native-community/eslint-config": "^3.0.2",
     "@release-it/conventional-changelog": "^5.0.0",
@@ -80,6 +83,7 @@
     "@types/react": "17.0.21"
   },
   "peerDependencies": {
+    "@elemaudio/core": "~2",
     "react": "*",
     "react-native": "*"
   },
