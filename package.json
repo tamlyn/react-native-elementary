@@ -1,6 +1,6 @@
 {
   "name": "react-native-elementary",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Use Elementary Audio in your React Native app",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",
