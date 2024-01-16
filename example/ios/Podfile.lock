@@ -375,7 +375,7 @@ PODS:
   - React-jsinspector (0.72.3)
   - React-logger (0.72.3):
     - glog
-  - react-native-elementary (0.1.0):
+  - react-native-elementary (0.2.2):
     - RCT-Folly (= 2021.07.22.00)
     - React-Core
   - React-NativeModulesApple (0.72.3):
@@ -693,7 +693,7 @@ SPEC CHECKSUMS:
   React-jsiexecutor: 59d1eb03af7d30b7d66589c410f13151271e8006
   React-jsinspector: b511447170f561157547bc0bef3f169663860be7
   React-logger: c5b527272d5f22eaa09bb3c3a690fee8f237ae95
-  react-native-elementary: 2277ecc08d622507bf461da4faee322bdcc21c88
+  react-native-elementary: 2d790248eaf5affac841172874011d8b6696925b
   React-NativeModulesApple: c57f3efe0df288a6532b726ad2d0322a9bf38472
   React-perflogger: 6bd153e776e6beed54c56b0847e1220a3ff92ba5
   React-RCTActionSheet: c0b62af44e610e69d9a2049a682f5dba4e9dff17
@@ -717,4 +717,4 @@ SPEC CHECKSUMS:
 
 PODFILE CHECKSUM: c47ec4940290e3bfb41ae3cb4272c588ec4f4318
 
-COCOAPODS: 1.12.1
+COCOAPODS: 1.14.3
