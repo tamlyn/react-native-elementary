@@ -12,14 +12,26 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
     return NAME
   }
 
-  // Example method
-  // See https://reactnative.dev/docs/native-modules-android
   @ReactMethod
-  fun multiply(a: Double, b: Double, promise: Promise) {
-    promise.resolve(a * b)
+  fun getSampleRate(number: Double, promise: Promise) {
+    promise.resolve(nativeGetSampleRate())
+  }
+
+    @ReactMethod
+  fun applyInstructions(message: String) {
+    nativeApplyInstructions(message)
   }
 
   companion object {
     const val NAME = "Elementary"
   }
+
+  init {
+    System.loadLibrary("react-native-elementary");
+    nativeStartAudioEngine();
+  }
+
+  external fun nativeGetSampleRate(): Int;
+  external fun nativeApplyInstructions(message: String);
+  external fun nativeStartAudioEngine();
 }

@@ -1,3 +1,3 @@
-[submodule "ios/vendor/elementary"]
-	path = ios/vendor/elementary
+[submodule "cpp/vendor/elementary"]
+	path = cpp/vendor/elementary
 	url = https://github.com/elemaudio/elementary.git
