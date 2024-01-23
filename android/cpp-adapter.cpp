@@ -1,6 +1,6 @@
 #include <jni.h>
 #include "react-native-elementary.h"
-#include "AudioEngine.h"
+#include "audioengine.h"
 
 
 static std::unique_ptr<elementary::AudioEngine> audioEngine;
