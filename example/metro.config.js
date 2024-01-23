@@ -27,7 +27,7 @@ const config = {
         )
         .concat(
           // TODO why do I have to exclude this?
-          new RegExp(`^${escape(path.join(root, 'ios/vendor/elementary/'))}.*$`)
+          new RegExp(`^${escape(path.join(root, 'cpp/vendor/elementary/'))}.*$`)
         )
     ),
 

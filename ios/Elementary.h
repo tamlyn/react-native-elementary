@@ -10,7 +10,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <React/RCTEventEmitter.h>
 
-#import "vendor/elementary/runtime/Runtime.h"
+#import "../cpp/vendor/elementary/runtime/Runtime.h"
 
 @interface Elementary : RCTEventEmitter <RCTBridgeModule>
 #endif

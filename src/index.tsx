@@ -20,7 +20,8 @@ const Elementary =
   );
 
 export function getSampleRate(): Promise<number> {
-  // TODO why does this require an argument?
+  // Native modules need first parameter to distinguish between params and callbacks
+  // in the bridge layer.
   return Elementary.getSampleRate(1);
 }
 
