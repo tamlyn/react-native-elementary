@@ -2,7 +2,7 @@
 
 > Use [Elementary Audio][elem] in your React Native app
 
-This is alpha quality software. **iOS only for now**, PRs welcome for Android support.
+This is alpha quality software.
 
 [elem]: https://elementary.audio
 
