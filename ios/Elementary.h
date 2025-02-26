@@ -1,16 +1,16 @@
 
+#import "../cpp/vendor/elementary/runtime/elem/Runtime.h"
+#import <AVFoundation/AVFoundation.h>
+
 #ifdef RCT_NEW_ARCH_ENABLED
 #import "generated/RNElementarySpec/RNElementarySpec.h"
 
-@interface Elementary : RCTEventEmitter <NativeElementarySpec>
+@interface Elementary : NSObject <NativeElementarySpec>
 
 #else
 
 #import <React/RCTBridgeModule.h>
-#import <AVFoundation/AVFoundation.h>
 #import <React/RCTEventEmitter.h>
-
-#import "../cpp/vendor/elementary/runtime/elem/Runtime.h"
 
 @interface Elementary : RCTEventEmitter <RCTBridgeModule>
 #endif

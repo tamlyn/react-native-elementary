@@ -1,5 +1,9 @@
 #import "Elementary.h"
 
+#ifdef RCT_NEW_ARCH_ENABLED
+//#import <React/RCTFabricComponentsPlugins.h>
+#endif
+
 @implementation Elementary
 
 RCT_EXPORT_MODULE();
@@ -67,18 +71,34 @@ RCT_EXPORT_MODULE();
   return YES;
 }
 
+#pragma mark - React Native Methods
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)applyInstructions:(NSString *)message
+#else
 RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
+#endif
 {
   NSLog(@"Applying graph: %@", message);
   self.runtime->applyInstructions(elem::js::parseJSON([message UTF8String]));
 }
 
+#ifdef RCT_NEW_ARCH_ENABLED
+- (NSNumber *)getSampleRate:(RCTPromiseResolveBlock)resolve
+                   reject:(RCTPromiseRejectBlock)reject
+#else
 RCT_EXPORT_METHOD(getSampleRate:
                   resolver:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
+#endif
 {
   NSLog(@"Getting sample rate");
+  #ifdef RCT_NEW_ARCH_ENABLED
+    resolve(@([self.audioEngine.outputNode outputFormatForBus:0].sampleRate));
+  return @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
+  #else
   resolve(@([self.audioEngine.outputNode outputFormatForBus:0].sampleRate));
+  #endif
 }
 
 #pragma mark - RCTEventEmitter
@@ -88,7 +108,6 @@ RCT_EXPORT_METHOD(getSampleRate:
   return @[@"AudioPlaybackFinished"];
 }
 
-// For the new architecture
 #ifdef RCT_NEW_ARCH_ENABLED
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
     (const facebook::react::ObjCTurboModule::InitParams &)params
@@ -96,4 +115,5 @@ RCT_EXPORT_METHOD(getSampleRate:
     return std::make_shared<facebook::react::NativeElementarySpecJSI>(params);
 }
 #endif
+
 @end
