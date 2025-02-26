@@ -163,5 +163,13 @@
         }
       ]
     ]
+  },
+  "codegenConfig": {
+    "name": "RNElementarySpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.elementary"
+    }
   }
 }

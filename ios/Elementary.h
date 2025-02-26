@@ -15,7 +15,7 @@
 @interface Elementary : RCTEventEmitter <RCTBridgeModule>
 #endif
 
-@property (nonatomic, strong) AVAudioEngine *audioEngine;
-@property (nonatomic, assign) std::shared_ptr<elem::Runtime<float>> runtime;
+@property(nonatomic, strong) AVAudioEngine *audioEngine;
+@property(nonatomic, assign) std::shared_ptr<elem::Runtime<float>> runtime;
 
 @end
