@@ -1,11 +1,11 @@
-const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+const {getDefaultConfig, mergeConfig} = require('@react-native/metro-config');
 const path = require('path');
 const escape = require('escape-string-regexp');
 const exclusionList = require('metro-config/src/defaults/exclusionList');
 const pak = require('../package.json');
 
 const root = path.resolve(__dirname, '..');
-const modules = Object.keys({ ...pak.peerDependencies });
+const modules = Object.keys({...pak.peerDependencies});
 
 /**
  * Metro configuration
@@ -22,13 +22,15 @@ const config = {
     blacklistRE: exclusionList(
       modules
         .map(
-          (m) =>
-            new RegExp(`^${escape(path.join(root, 'node_modules', m))}\\/.*$`)
+          m =>
+            new RegExp(`^${escape(path.join(root, 'node_modules', m))}\\/.*$`),
         )
         .concat(
           // TODO why do I have to exclude this?
-          new RegExp(`^${escape(path.join(root, 'cpp/vendor/elementary/'))}.*$`)
-        )
+          new RegExp(
+            `^${escape(path.join(root, 'cpp/vendor/elementary/'))}.*$`,
+          ),
+        ),
     ),
 
     extraNodeModules: modules.reduce((acc, name) => {

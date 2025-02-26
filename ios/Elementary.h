@@ -1,6 +1,6 @@
 
 #ifdef RCT_NEW_ARCH_ENABLED
-#import "RNElementarySpec.h"
+#import "generated/RNElementarySpec/RNElementarySpec.h"
 
 @interface Elementary : RCTEventEmitter <NativeElementarySpec>
 
