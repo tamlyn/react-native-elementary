@@ -3,9 +3,11 @@
 #import <AVFoundation/AVFoundation.h>
 
 #ifdef RCT_NEW_ARCH_ENABLED
-#import "generated/RNElementarySpec/RNElementarySpec.h"
+#import <RNElementarySpec/RNElementarySpec.h>
+#import <React/RCTEventEmitter.h>
 
-@interface Elementary : NSObject <NativeElementarySpec>
+// In new arch, extend RCTEventEmitter and conform to NativeElementarySpec
+@interface Elementary : RCTEventEmitter <NativeElementarySpec>
 
 #else
 

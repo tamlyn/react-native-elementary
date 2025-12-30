@@ -84,21 +84,16 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
-- (NSNumber *)getSampleRate:(RCTPromiseResolveBlock)resolve
-                   reject:(RCTPromiseRejectBlock)reject
+- (void)getSampleRate:(RCTPromiseResolveBlock)resolve
+               reject:(RCTPromiseRejectBlock)reject
 #else
-RCT_EXPORT_METHOD(getSampleRate:
-                  resolver:(RCTPromiseResolveBlock)resolve
+RCT_EXPORT_METHOD(getSampleRate:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
   NSLog(@"Getting sample rate");
-  #ifdef RCT_NEW_ARCH_ENABLED
-    resolve(@([self.audioEngine.outputNode outputFormatForBus:0].sampleRate));
-  return @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
-  #else
-  resolve(@([self.audioEngine.outputNode outputFormatForBus:0].sampleRate));
-  #endif
+  NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
+  resolve(sampleRate);
 }
 
 #pragma mark - RCTEventEmitter
@@ -107,6 +102,16 @@ RCT_EXPORT_METHOD(getSampleRate:
 {
   return @[@"AudioPlaybackFinished"];
 }
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)addListener:(NSString *)eventName {
+  // No-op, RN handles subscription tracking
+}
+
+- (void)removeListeners:(double)count {
+  // No-op
+}
+#endif
 
 #ifdef RCT_NEW_ARCH_ENABLED
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

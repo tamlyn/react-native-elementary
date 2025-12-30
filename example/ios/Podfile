@@ -1,3 +1,4 @@
+# Toggle new architecture: set to '1' for new arch, '0' for old arch
 ENV['RCT_NEW_ARCH_ENABLED'] = '1'
 
 # Resolve react_native_pods.rb with node to allow for hoisting
@@ -25,11 +26,6 @@ target 'ExampleNewArch' do
     :app_path => "#{Pod::Config.instance.installation_root}/.."
   )
 
-
-  pre_install do |installer|
-    system("cd ../../ && npx bob build --target codegen")
-  end
-
   post_install do |installer|
     # https://github.com/facebook/react-native/blob/main/packages/react-native/scripts/react_native_pods.rb#L197-L202
     react_native_post_install(
@@ -44,7 +40,7 @@ target 'ExampleNewArch' do
         
         # Fix C++ standard library issues for react-native-elementary
         if target.name == 'react-native-elementary'
-          config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++17'
+          config.build_settings['CLANG_CXX_LANGUAGE_STANDARD'] = 'c++20'
           config.build_settings['CLANG_CXX_LIBRARY'] = 'libc++'
           config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= ['$(inherited)', 'ELEMENTARY_IOS=1']
         end

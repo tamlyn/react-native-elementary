@@ -22,4 +22,14 @@ public class ElementaryTurboModule extends NativeElementarySpec {
     public void applyInstructions(String message) {
         module.applyInstructions(message);
     }
+
+    @Override
+    public void addListener(String eventName) {
+        module.addListener(eventName);
+    }
+
+    @Override
+    public void removeListeners(double count) {
+        module.removeListeners(count);
+    }
 } 
