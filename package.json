@@ -47,6 +47,7 @@
     "release": "release-it",
     "example": "yarn --cwd example",
     "example_old": "yarn --cwd example_old",
+    "example-expo": "yarn --cwd example-expo",
     "build:android": "cd example/android && ./gradlew assembleDebug --no-daemon --console=plain -PreactNativeArchitectures=arm64-v8a",
     "build:ios": "cd example/ios && xcodebuild -workspace ExampleNewArch.xcworkspace -scheme ExampleNewArch -configuration Debug -sdk iphonesimulator CC=clang CPLUSPLUS=clang++ LD=clang LDPLUSPLUS=clang++ GCC_OPTIMIZATION_LEVEL=0 GCC_PRECOMPILE_PREFIX_HEADER=YES ASSETCATALOG_COMPILER_OPTIMIZATION=time DEBUG_INFORMATION_FORMAT=dwarf COMPILER_INDEX_STORE_ENABLE=NO",
     "bootstrap": "yarn example && yarn install && yarn example pods",
@@ -112,6 +113,8 @@
       "<rootDir>/example/node_modules",
       "<rootDir>/example_old/node_modules",
       "<rootDir>/example_old",
+      "<rootDir>/example-expo/node_modules",
+      "<rootDir>/example-expo",
       "<rootDir>/lib/"
     ]
   },
