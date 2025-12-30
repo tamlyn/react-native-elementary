@@ -1,11 +1,11 @@
 import * as React from 'react';
 
-import {StyleSheet, View, Text, Button} from 'react-native';
-import {useRenderer} from 'react-native-elementary';
-import {el} from '@elemaudio/core';
+import { StyleSheet, View, Text, Button } from 'react-native';
+import { useRenderer } from 'react-native-elementary';
+import { el } from '@elemaudio/core';
 
 export default function App() {
-  const {core} = useRenderer();
+  const { core } = useRenderer();
 
   if (!core) {
     return (
