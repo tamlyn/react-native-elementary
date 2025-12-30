@@ -68,8 +68,8 @@
     "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
-    "@elemaudio/core": "^2.0.1",
     "@commitlint/config-conventional": "^17.0.2",
+    "@elemaudio/core": "^2.0.1",
     "@evilmartians/lefthook": "^1.5.0",
     "@react-native-community/cli": "15.0.1",
     "@react-native/eslint-config": "^0.73.1",
@@ -80,16 +80,19 @@
     "del-cli": "^5.1.0",
     "eslint": "^8.51.0",
     "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-ft-flow": "^3.0.11",
     "eslint-plugin-prettier": "^5.0.1",
+    "hermes-eslint": "^0.33.2",
     "jest": "^29.7.0",
+    "metro-react-native-babel-preset": "^0.77.0",
+    "pod-install": "^0.1.0",
     "prettier": "^3.0.3",
     "react": "19.0.0",
     "react-native": "0.78.0",
     "react-native-builder-bob": "^0.37.0",
     "release-it": "^17.10.0",
     "turbo": "^1.10.7",
-    "typescript": "^5.2.2",
-    "pod-install": "^0.1.0"
+    "typescript": "^5.2.2"
   },
   "resolutions": {
     "@types/react": "17.0.21"
@@ -107,6 +110,8 @@
     "preset": "react-native",
     "modulePathIgnorePatterns": [
       "<rootDir>/example/node_modules",
+      "<rootDir>/example_old/node_modules",
+      "<rootDir>/example_old",
       "<rootDir>/lib/"
     ]
   },
@@ -166,7 +171,6 @@
     "source": "src",
     "output": "lib",
     "targets": [
-      "codegen",
       [
         "commonjs",
         {
