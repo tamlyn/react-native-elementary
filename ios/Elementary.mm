@@ -1,5 +1,9 @@
 #import "Elementary.h"
 
+#ifdef RCT_NEW_ARCH_ENABLED
+//#import <React/RCTFabricComponentsPlugins.h>
+#endif
+
 @implementation Elementary
 
 RCT_EXPORT_MODULE();
@@ -67,18 +71,29 @@ RCT_EXPORT_MODULE();
   return YES;
 }
 
+#pragma mark - React Native Methods
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)applyInstructions:(NSString *)message
+#else
 RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
+#endif
 {
   NSLog(@"Applying graph: %@", message);
   self.runtime->applyInstructions(elem::js::parseJSON([message UTF8String]));
 }
 
-RCT_EXPORT_METHOD(getSampleRate:
-                  resolver:(RCTPromiseResolveBlock)resolve
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)getSampleRate:(RCTPromiseResolveBlock)resolve
+               reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(getSampleRate:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
+#endif
 {
   NSLog(@"Getting sample rate");
-  resolve(@([self.audioEngine.outputNode outputFormatForBus:0].sampleRate));
+  NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
+  resolve(sampleRate);
 }
 
 #pragma mark - RCTEventEmitter
@@ -87,5 +102,23 @@ RCT_EXPORT_METHOD(getSampleRate:
 {
   return @[@"AudioPlaybackFinished"];
 }
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)addListener:(NSString *)eventName {
+  // No-op, RN handles subscription tracking
+}
+
+- (void)removeListeners:(double)count {
+  // No-op
+}
+#endif
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:
+    (const facebook::react::ObjCTurboModule::InitParams &)params
+{
+    return std::make_shared<facebook::react::NativeElementarySpecJSI>(params);
+}
+#endif
 
 @end

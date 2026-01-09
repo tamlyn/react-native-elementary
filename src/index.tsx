@@ -1,6 +1,7 @@
 import { NativeModules, Platform } from 'react-native';
 import { Renderer } from '@elemaudio/core';
 import { useEffect, useRef, useState } from 'react';
+import NativeElementary from './NativeElementary';
 
 const LINKING_ERROR =
   `The package 'react-native-elementary' doesn't seem to be linked. Make sure: \n\n` +
@@ -8,8 +9,12 @@ const LINKING_ERROR =
   '- You rebuilt the app after installing the package\n' +
   '- You are not using Expo Go\n';
 
-const Elementary =
-  NativeModules.Elementary ??
+// Get the native module
+const Elementary = NativeElementary || NativeModules.Elementary;
+
+// Fall back to error if module is not available
+const ElementaryModule =
+  Elementary ??
   new Proxy(
     {},
     {
@@ -20,15 +25,13 @@ const Elementary =
   );
 
 export function getSampleRate(): Promise<number> {
-  // Native modules need first parameter to distinguish between params and callbacks
-  // in the bridge layer.
-  return Elementary.getSampleRate(1);
+  return ElementaryModule.getSampleRate();
 }
 
 export class NativeRenderer extends Renderer {
   constructor(sampleRate: number) {
     super(sampleRate, (instructions: unknown) => {
-      Elementary.applyInstructions(JSON.stringify(instructions));
+      ElementaryModule.applyInstructions(JSON.stringify(instructions));
     });
   }
 }

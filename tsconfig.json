@@ -25,5 +25,5 @@
     "target": "esnext",
     "verbatimModuleSyntax": true
   },
-  "exclude": ["cpp/vendor/**/*"]
+  "exclude": ["cpp/vendor/**/*", "example", "example-expo", "example_old"]
 }

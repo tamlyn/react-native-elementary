@@ -1,0 +1,22 @@
+{
+  "modules": {
+    "Elementary": {
+      "type": "NativeModule",
+      "methods": {
+        "getSampleRate": {
+          "type": "Promise",
+          "returnType": "number"
+        },
+        "applyInstructions": {
+          "type": "method",
+          "arguments": [
+            {
+              "name": "message",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  }
+} 

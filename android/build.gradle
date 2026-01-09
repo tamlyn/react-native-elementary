@@ -60,6 +60,17 @@ android {
     }
   }
 
+  // Include arch-specific source sets
+  sourceSets {
+    main {
+      if (isNewArchitectureEnabled()) {
+        java.srcDirs += "src/newarch"
+      } else {
+        java.srcDirs += "src/oldarch"
+      }
+    }
+  }
+
   compileSdkVersion getExtOrIntegerDefault("compileSdkVersion")
 
   defaultConfig {

@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Elementary Expo Example",
+    "slug": "example-expo",
+    "version": "1.0.0",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "com.elementary.expoexample",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.elementary.expoexample"
+    },
+    "plugins": []
+  }
+}

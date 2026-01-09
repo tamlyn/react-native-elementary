@@ -1,0 +1,25 @@
+{
+  "name": "example-expo",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild"
+  },
+  "dependencies": {
+    "@elemaudio/core": "^2.0.1",
+    "expo": "~53.0.0",
+    "expo-dev-client": "~5.1.0",
+    "react": "19.0.0",
+    "react-native": "0.79.2",
+    "react-native-elementary": "file:.."
+  },
+  "devDependencies": {
+    "@babel/core": "^7.24.0",
+    "@types/react": "~19.0.10",
+    "typescript": "~5.3.3"
+  },
+  "private": true
+}
