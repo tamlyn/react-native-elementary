@@ -12,6 +12,7 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		53F26EA72D6EC1A0008E1ABD /* AVFAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 53F26EA52D6EC1A0008E1ABD /* AVFAudio.framework */; };
 		53F26EA82D6EC1A0008E1ABD /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 53F26EA62D6EC1A0008E1ABD /* AVFoundation.framework */; };
+		53F26EA92D6EC1A0008E1ABD /* samples in Resources */ = {isa = PBXBuildFile; fileRef = 53F26EAA2D6EC1A0008E1ABD /* samples */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 /* End PBXBuildFile section */
@@ -24,6 +25,7 @@
 		3B4392A12AC88292D35C810B /* Pods-ExampleNewArch.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ExampleNewArch.debug.xcconfig"; path = "Target Support Files/Pods-ExampleNewArch/Pods-ExampleNewArch.debug.xcconfig"; sourceTree = "<group>"; };
 		53F26EA52D6EC1A0008E1ABD /* AVFAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFAudio.framework; path = System/Library/Frameworks/AVFAudio.framework; sourceTree = SDKROOT; };
 		53F26EA62D6EC1A0008E1ABD /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		53F26EAA2D6EC1A0008E1ABD /* samples */ = {isa = PBXFileReference; lastKnownFileType = folder; name = samples; path = ../assets/samples; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-ExampleNewArch.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ExampleNewArch.release.xcconfig"; path = "Target Support Files/Pods-ExampleNewArch/Pods-ExampleNewArch.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-ExampleNewArch.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-ExampleNewArch.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = ExampleNewArch/AppDelegate.swift; sourceTree = "<group>"; };
@@ -48,6 +50,7 @@
 		13B07FAE1A68108700A75B9A /* ExampleNewArch */ = {
 			isa = PBXGroup;
 			children = (
+				53F26EAA2D6EC1A0008E1ABD /* samples */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
@@ -168,6 +171,7 @@
 			files = (
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
+				53F26EA92D6EC1A0008E1ABD /* samples in Resources */,
 				0AC277E0E2E8254A01A720AE /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

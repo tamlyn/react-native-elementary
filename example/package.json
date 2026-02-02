@@ -11,9 +11,10 @@
     "pods": "pod-install --quiet"
   },
   "dependencies": {
-    "@elemaudio/core": "^2.0.1",
+    "@elemaudio/core": "^4.0.3",
     "react": "19.0.0",
-    "react-native": "0.78.0"
+    "react-native": "0.78.0",
+    "react-native-fs": "^2.20.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

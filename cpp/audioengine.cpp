@@ -1,4 +1,5 @@
 #include "audioengine.h"
+#include "vendor/elementary/runtime/elem/AudioBufferResource.h"
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
@@ -19,6 +20,61 @@ namespace elementary {
 
     int AudioEngine::getSampleRate() {
         return device.sampleRate;
+    }
+
+    AudioLoadResult AudioEngine::loadAudioResource(const std::string& key, const std::string& filePath) {
+        AudioLoadResult result = AudioResourceLoader::loadFile(key, filePath);
+
+        if (!result.success) {
+            return result;
+        }
+
+        size_t numChannels = result.info.channels;
+        size_t numSamples = result.info.sampleCount;
+        std::vector<float*> channelPtrs(numChannels);
+        for (size_t ch = 0; ch < numChannels; ++ch) {
+            channelPtrs[ch] = result.data.data() + (ch * numSamples);
+        }
+
+        auto resource = std::make_unique<elem::AudioBufferResource>(
+            channelPtrs.data(),
+            numChannels,
+            numSamples
+        );
+        bool added = proxy->runtime.addSharedResource(key, std::move(resource));
+
+        if (!added) {
+            result.success = false;
+            result.error = "Resource with key '" + key + "' already exists";
+            return result;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(resourceMutex);
+            loadedResources.insert(key);
+        }
+
+        return result;
+    }
+
+    bool AudioEngine::unloadAudioResource(const std::string& key) {
+        bool found = false;
+
+        // Only hold the lock while modifying loadedResources
+        {
+            std::lock_guard<std::mutex> lock(resourceMutex);
+            auto it = loadedResources.find(key);
+            if (it != loadedResources.end()) {
+                loadedResources.erase(it);
+                found = true;
+            }
+        }
+
+        if (found) {
+            proxy->runtime.pruneSharedResources();
+        }
+
+        return found;
     }
 
     void AudioEngine::initializeDevice() {

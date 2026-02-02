@@ -32,4 +32,19 @@ public class ElementaryTurboModule extends NativeElementarySpec {
     public void removeListeners(double count) {
         module.removeListeners(count);
     }
-} 
+
+    @Override
+    public void loadAudioResource(String key, String filePath, Promise promise) {
+        module.loadAudioResource(key, filePath, promise);
+    }
+
+    @Override
+    public void unloadAudioResource(String key, Promise promise) {
+        module.unloadAudioResource(key, promise);
+    }
+
+    @Override
+    public void getDocumentsDirectory(Promise promise) {
+        module.getDocumentsDirectory(promise);
+    }
+}
