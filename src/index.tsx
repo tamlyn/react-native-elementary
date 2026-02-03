@@ -1,6 +1,6 @@
 import { NativeModules, Platform } from 'react-native';
 import { Renderer } from '@elemaudio/core';
-import { useEffect, useRef, useState } from 'react';
+import { useRef } from 'react';
 import NativeElementary, { type AudioResourceInfo } from './NativeElementary';
 
 export type { AudioResourceInfo };
@@ -47,6 +47,13 @@ export function getDocumentsDirectory(): Promise<string> {
   return ElementaryModule.getDocumentsDirectory();
 }
 
+/**
+ * Native renderer for Elementary Audio.
+ *
+ * Note: Elementary v4 no longer requires a sampleRate argument in the
+ * constructor. The sample rate is determined internally by the native
+ * audio engine.
+ */
 export class NativeRenderer extends Renderer {
   constructor() {
     super((instructions: unknown) => {
@@ -55,16 +62,12 @@ export class NativeRenderer extends Renderer {
   }
 }
 
-export function useRenderer(): { core: Renderer | undefined } {
-  const [_loading, setLoading] = useState(true);
+export function useRenderer(): { core: Renderer } {
   const ref = useRef<NativeRenderer>();
 
-  useEffect(() => {
-    getSampleRate().then(() => {
-      ref.current = new NativeRenderer();
-      setLoading(false);
-    });
-  }, []);
+  if (!ref.current) {
+    ref.current = new NativeRenderer();
+  }
 
   return { core: ref.current };
 }

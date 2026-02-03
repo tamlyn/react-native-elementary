@@ -72,7 +72,7 @@ export default function App() {
   }, [loadedSamples]);
 
   const playSample = (key: string) => {
-    if (!core || !loadedSamples[key]) return;
+    if (!loadedSamples[key]) return;
 
     const now = Date.now();
     const lastTime = lastPlayTime.current[key] || 0;
@@ -91,7 +91,7 @@ export default function App() {
   };
 
   const playBeat = () => {
-    if (!core || Object.keys(loadedSamples).length === 0) return;
+    if (Object.keys(loadedSamples).length === 0) return;
 
     const bpm = 126;
     const beatFreq = bpm / 60;
@@ -114,18 +114,8 @@ export default function App() {
   };
 
   const stop = () => {
-    if (core) {
-      core.render();
-    }
+    core.render();
   };
-
-  if (!core) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.title}>Initialising audio...</Text>
-      </View>
-    );
-  }
 
   return (
     <View style={styles.container}>
