@@ -19,5 +19,6 @@
 
 @property(nonatomic, strong) AVAudioEngine *audioEngine;
 @property(nonatomic, assign) std::shared_ptr<elem::Runtime<float>> runtime;
+@property(nonatomic, strong) NSMutableSet<NSString *> *loadedResources;
 
 @end

@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 17)  # Updated to C++17
 add_library(react-native-elementary SHARED
             ../cpp/react-native-elementary.cpp
             ../cpp/audioengine.cpp
+            ../cpp/AudioResourceLoader.cpp
             cpp-adapter.cpp
 )
 

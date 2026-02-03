@@ -2,7 +2,10 @@
 #define AUDIOENGINE_H
 
 #include "../cpp/vendor/elementary/runtime/elem/Runtime.h"
+#include "AudioResourceLoader.h"
 #include "miniaudio.h"
+#include <mutex>
+#include <unordered_set>
 
 namespace elementary {
     struct DeviceProxy {
@@ -10,7 +13,7 @@ namespace elementary {
         std::vector<float> scratchData;
 
         DeviceProxy(double sampleRate, size_t blockSize)
-            : scratchData(2 * blockSize), runtime(sampleRate, blockSize) {}
+            : runtime(sampleRate, blockSize), scratchData(2 * blockSize) {}
 
         void process(float* outputData, size_t numChannels, size_t numFrames) {
             if (scratchData.size() < (numChannels * numFrames))
@@ -44,6 +47,10 @@ namespace elementary {
             elem::Runtime<float>& getRuntime();
             int getSampleRate();
 
+            // VFS / Audio Resource methods
+            AudioLoadResult loadAudioResource(const std::string& key, const std::string& filePath);
+            bool unloadAudioResource(const std::string& key);
+
         private:
             void initializeDevice();
             static void audioCallback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount);
@@ -52,6 +59,10 @@ namespace elementary {
             ma_device_config deviceConfig;
             ma_device device;
             bool deviceInitialized;
+
+            // Track loaded resources for unloading
+            std::mutex resourceMutex;
+            std::unordered_set<std::string> loadedResources;
     };
 }
 

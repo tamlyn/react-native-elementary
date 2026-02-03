@@ -70,7 +70,7 @@
   },
   "devDependencies": {
     "@commitlint/config-conventional": "^17.0.2",
-    "@elemaudio/core": "^2.0.1",
+    "@elemaudio/core": "^4.0.3",
     "@evilmartians/lefthook": "^1.5.0",
     "@react-native-community/cli": "15.0.1",
     "@react-native/eslint-config": "^0.73.1",
@@ -99,7 +99,7 @@
     "@types/react": "17.0.21"
   },
   "peerDependencies": {
-    "@elemaudio/core": "~2",
+    "@elemaudio/core": "^4",
     "react": "*",
     "react-native": "*"
   },
