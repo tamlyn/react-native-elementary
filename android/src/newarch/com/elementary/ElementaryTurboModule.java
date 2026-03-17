@@ -47,4 +47,14 @@ public class ElementaryTurboModule extends NativeElementarySpec {
     public void getDocumentsDirectory(Promise promise) {
         module.getDocumentsDirectory(promise);
     }
+
+    @Override
+    public void getBundlePath(Promise promise) {
+        module.getBundlePath(promise);
+    }
+
+    @Override
+    public void setProperty(double nodeHash, String key, double value) {
+        module.setProperty(nodeHash, key, value);
+    }
 }

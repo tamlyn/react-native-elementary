@@ -93,6 +93,21 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
     promise.resolve(documentsDir)
   }
 
+  @ReactMethod
+  fun getBundlePath(promise: Promise) {
+    val dataDir = reactApplicationContext.applicationInfo.dataDir
+    promise.resolve(dataDir)
+  }
+
+  @ReactMethod
+  fun setProperty(nodeHash: Double, key: String, value: Double) {
+    // Build a SET_PROPERTY instruction batch: [[3, nodeHash, key, value]]
+    // InstructionType::SET_PROPERTY = 3
+    val instruction = "[3,${nodeHash.toInt()},\"$key\",$value]"
+    val batch = "[$instruction]"
+    nativeApplyInstructions(batch)
+  }
+
   // Helper to emit events
   private fun sendEvent(eventName: String, params: WritableMap?) {
     reactApplicationContext
