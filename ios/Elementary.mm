@@ -23,13 +23,18 @@ RCT_EXPORT_MODULE();
     const float **inputBuffer = (const float **)calloc(numOutputChannels, sizeof(float *));
     float **outputBuffer = (float **)malloc(numOutputChannels * sizeof(float *));
 
+    NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f", numOutputChannels, outputFormat.sampleRate);
+
     AVAudioSourceNode *sourceNode = [[AVAudioSourceNode alloc] initWithRenderBlock:^OSStatus(
             BOOL * _Nonnull isSilence,
             const AudioTimeStamp * _Nonnull timestamp,
             AVAudioFrameCount frameCount,
             AudioBufferList * _Nonnull audioBufferList) {
 
-        for (UInt32 channel = 0; channel < audioBufferList->mNumberBuffers; channel++) {
+        // Safety: ensure buffer list matches expected channel count
+        UInt32 actualChannels = audioBufferList->mNumberBuffers;
+
+        for (UInt32 channel = 0; channel < actualChannels; channel++) {
             memset(audioBufferList->mBuffers[channel].mData, 0,
                    audioBufferList->mBuffers[channel].mDataByteSize);
         }
@@ -38,15 +43,19 @@ RCT_EXPORT_MODULE();
             return noErr;
         }
 
-        for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
+        // Use the ACTUAL buffer count, not the captured init-time count
+        // (audio session reconfiguration can change channel count)
+        int processChannels = MIN(numOutputChannels, (int)actualChannels);
+
+        for (int channel = 0; channel < processChannels; channel++) {
           outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
         }
 
         self.runtime->process(
             inputBuffer,
-            numOutputChannels,
+            processChannels,
             outputBuffer,
-            numOutputChannels,
+            processChannels,
             frameCount,
             nullptr
         );
@@ -65,8 +74,52 @@ RCT_EXPORT_MODULE();
 
     int bufferSize = 512;
     self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
+
+    // Handle audio session interruptions (phone calls, background, etc.)
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleAudioInterruption:)
+                                                 name:AVAudioSessionInterruptionNotification
+                                               object:[AVAudioSession sharedInstance]];
+
+    // Handle audio engine configuration changes (headphones plugged/unplugged, etc.)
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleEngineConfigChange:)
+                                                 name:AVAudioEngineConfigurationChangeNotification
+                                               object:self.audioEngine];
   }
   return self;
+}
+
+- (void)handleAudioInterruption:(NSNotification *)notification {
+  NSDictionary *info = notification.userInfo;
+  AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+
+  if (type == AVAudioSessionInterruptionTypeEnded) {
+    // Reactivate audio session and restart engine
+    NSError *error;
+    [[AVAudioSession sharedInstance] setActive:YES error:&error];
+    if (error) {
+      NSLog(@"[Elementary] Failed to reactivate audio session: %@", error.localizedDescription);
+      return;
+    }
+    if (![self.audioEngine startAndReturnError:&error]) {
+      NSLog(@"[Elementary] Failed to restart engine after interruption: %@", error.localizedDescription);
+    } else {
+      NSLog(@"[Elementary] Engine restarted after interruption");
+    }
+  } else {
+    NSLog(@"[Elementary] Audio interrupted");
+  }
+}
+
+- (void)handleEngineConfigChange:(NSNotification *)notification {
+  NSLog(@"[Elementary] Engine configuration changed, restarting...");
+  NSError *error;
+  if (![self.audioEngine startAndReturnError:&error]) {
+    NSLog(@"[Elementary] Failed to restart engine after config change: %@", error.localizedDescription);
+  } else {
+    NSLog(@"[Elementary] Engine restarted after config change");
+  }
 }
 
 + (BOOL) requiresMainQueueSetup {
