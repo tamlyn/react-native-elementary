@@ -22,6 +22,27 @@ namespace elementary {
         return device.sampleRate;
     }
 
+    int AudioEngine::getNumChannels() {
+        return deviceInitialized ? static_cast<int>(device.playback.channels) : 0;
+    }
+
+    bool AudioEngine::isDeviceRunning() {
+        if (!deviceInitialized) return false;
+        return ma_device_get_state(&device) == ma_device_state_started;
+    }
+
+    void AudioEngine::stopDevice() {
+        if (deviceInitialized) {
+            ma_device_stop(&device);
+        }
+    }
+
+    void AudioEngine::startDevice() {
+        if (deviceInitialized) {
+            ma_device_start(&device);
+        }
+    }
+
     AudioLoadResult AudioEngine::loadAudioResource(const std::string& key, const std::string& filePath) {
         AudioLoadResult result = AudioResourceLoader::loadFile(key, filePath);
 

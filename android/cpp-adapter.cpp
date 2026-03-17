@@ -40,6 +40,34 @@ Java_com_elementary_ElementaryModule_nativeGetSampleRate(JNIEnv *env, jclass typ
 }
 
 extern "C"
+JNIEXPORT jint JNICALL
+Java_com_elementary_ElementaryModule_nativeGetNumChannels(JNIEnv *env, jclass type) {
+    return audioEngine.get() ? audioEngine->getNumChannels() : 0;
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_elementary_ElementaryModule_nativeIsDeviceRunning(JNIEnv *env, jclass type) {
+    return audioEngine.get() ? static_cast<jboolean>(audioEngine->isDeviceRunning()) : JNI_FALSE;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_elementary_ElementaryModule_nativeStopDevice(JNIEnv *env, jclass type) {
+    if (audioEngine) {
+        audioEngine->stopDevice();
+    }
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_elementary_ElementaryModule_nativeStartDevice(JNIEnv *env, jclass type) {
+    if (audioEngine) {
+        audioEngine->startDevice();
+    }
+}
+
+extern "C"
 JNIEXPORT jobject JNICALL
 Java_com_elementary_ElementaryModule_nativeLoadAudioResource(JNIEnv *env, jclass type, jstring key, jstring filePath) {
     if (!audioEngine) {

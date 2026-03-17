@@ -16,8 +16,13 @@ namespace elementary {
             : runtime(sampleRate, blockSize), scratchData(2 * blockSize) {}
 
         void process(float* outputData, size_t numChannels, size_t numFrames) {
-            if (scratchData.size() < (numChannels * numFrames))
-                scratchData.resize(numChannels * numFrames);
+            // Clamp to max supported channels (stereo) to prevent out-of-bounds
+            // access if the device reports more channels than we can handle
+            static constexpr size_t kMaxChannels = 2;
+            size_t processChannels = std::min(numChannels, kMaxChannels);
+
+            if (scratchData.size() < (processChannels * numFrames))
+                scratchData.resize(processChannels * numFrames);
 
             auto* deinterleaved = scratchData.data();
             std::array<float*, 2> ptrs {deinterleaved, deinterleaved + numFrames};
@@ -26,14 +31,18 @@ namespace elementary {
                 nullptr,
                 0,
                 ptrs.data(),
-                numChannels,
+                processChannels,
                 numFrames,
                 nullptr
             );
 
             for (size_t i = 0; i < numChannels; ++i) {
                 for (size_t j = 0; j < numFrames; ++j) {
-                    outputData[i + numChannels * j] = deinterleaved[i * numFrames + j];
+                    if (i < processChannels) {
+                        outputData[i + numChannels * j] = deinterleaved[i * numFrames + j];
+                    } else {
+                        outputData[i + numChannels * j] = 0.0f;
+                    }
                 }
             }
         }
@@ -46,6 +55,10 @@ namespace elementary {
 
             elem::Runtime<float>& getRuntime();
             int getSampleRate();
+            int getNumChannels();
+            bool isDeviceRunning();
+            void stopDevice();
+            void startDevice();
 
             // VFS / Audio Resource methods
             AudioLoadResult loadAudioResource(const std::string& key, const std::string& filePath);
