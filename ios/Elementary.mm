@@ -141,6 +141,28 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
+- (void)setProperty:(double)nodeHash key:(NSString *)key value:(double)value
+#else
+RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double)value)
+#endif
+{
+  if (self.runtime == nullptr) return;
+
+  // Build a SET_PROPERTY instruction batch: [[3, nodeHash, key, value]]
+  // InstructionType::SET_PROPERTY = 3
+  elem::js::Array instruction;
+  instruction.push_back((double)3);
+  instruction.push_back(nodeHash);
+  instruction.push_back(std::string([key UTF8String]));
+  instruction.push_back(value);
+
+  elem::js::Array batch;
+  batch.push_back(instruction);
+
+  self.runtime->applyInstructions(batch);
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
 - (void)getSampleRate:(RCTPromiseResolveBlock)resolve
                reject:(RCTPromiseRejectBlock)reject
 #else

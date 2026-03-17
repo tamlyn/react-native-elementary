@@ -14,6 +14,10 @@ export interface Spec extends TurboModule {
   getSampleRate(): Promise<number>;
   applyInstructions(message: string): void;
 
+  // Real-time property updates (no graph re-render, audio-thread safe)
+  // nodeHash is the elem node hash (int32), key is the property name, value is the new value
+  setProperty(nodeHash: number, key: string, value: number): void;
+
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 
