@@ -3,14 +3,21 @@
 #include "../cpp/AudioResourceLoader.h"
 #include "../cpp/vendor/elementary/runtime/elem/AudioBufferResource.h"
 
+static Elementary *_sharedInstance = nil;
+
 @implementation Elementary
 
 RCT_EXPORT_MODULE();
+
++ (instancetype)sharedInstance {
+  return _sharedInstance;
+}
 
 - (instancetype)init
 {
   self = [super init];
   if (self) {
+    _sharedInstance = self;
     self.loadedResources = [[NSMutableSet alloc] init];
 
     self.audioEngine = [[AVAudioEngine alloc] init];
@@ -124,6 +131,20 @@ RCT_EXPORT_MODULE();
 
 + (BOOL) requiresMainQueueSetup {
   return YES;
+}
+
+#pragma mark - Diagnostics
+
+RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
+                      rejecter:(RCTPromiseRejectBlock)reject)
+{
+  AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
+  resolve(@{
+    @"channels": @(format.channelCount),
+    @"sampleRate": @(format.sampleRate),
+    @"engineRunning": @(self.audioEngine.isRunning),
+    @"runtimeReady": @(self.runtime != nullptr),
+  });
 }
 
 #pragma mark - React Native Methods
@@ -278,6 +299,18 @@ RCT_EXPORT_METHOD(getDocumentsDirectory:(RCTPromiseResolveBlock)resolve
   NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
   NSString *documentsDirectory = [paths firstObject];
   resolve(documentsDirectory);
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)getBundlePath:(RCTPromiseResolveBlock)resolve
+               reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(getBundlePath:(RCTPromiseResolveBlock)resolve
+                       rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  NSString *bundlePath = [[NSBundle mainBundle] resourcePath];
+  resolve(bundlePath);
 }
 
 #pragma mark - RCTEventEmitter

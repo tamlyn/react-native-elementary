@@ -21,4 +21,7 @@
 @property(nonatomic, assign) std::shared_ptr<elem::Runtime<float>> runtime;
 @property(nonatomic, strong) NSMutableSet<NSString *> *loadedResources;
 
+/// Shared instance for native code to access the runtime (e.g. for real-time MIDI triggering)
++ (instancetype)sharedInstance;
+
 @end

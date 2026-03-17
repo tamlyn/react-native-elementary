@@ -27,6 +27,7 @@ export interface Spec extends TurboModule {
 
   // Path helpers
   getDocumentsDirectory(): Promise<string>;
+  getBundlePath(): Promise<string>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Elementary');
