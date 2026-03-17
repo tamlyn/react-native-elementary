@@ -4,6 +4,7 @@
 #include "../cpp/vendor/elementary/runtime/elem/Runtime.h"
 #include "AudioResourceLoader.h"
 #include "miniaudio.h"
+#include <atomic>
 #include <mutex>
 #include <unordered_set>
 
@@ -11,11 +12,16 @@ namespace elementary {
     struct DeviceProxy {
         elem::Runtime<float> runtime;
         std::vector<float> scratchData;
+        std::atomic<bool> muted{false};
 
         DeviceProxy(double sampleRate, size_t blockSize)
             : runtime(sampleRate, blockSize), scratchData(2 * blockSize) {}
 
         void process(float* outputData, size_t numChannels, size_t numFrames) {
+            if (muted.load(std::memory_order_relaxed)) {
+                std::memset(outputData, 0, numChannels * numFrames * sizeof(float));
+                return;
+            }
             // Clamp to max supported channels (stereo) to prevent out-of-bounds
             // access if the device reports more channels than we can handle
             static constexpr size_t kMaxChannels = 2;

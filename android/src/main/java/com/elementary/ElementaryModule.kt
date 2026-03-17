@@ -218,7 +218,18 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   }
 
   // LifecycleEventListener
-  override fun onHostResume() {}
+  override fun onHostResume() {
+    if (!hasAudioFocus) {
+      Log.d(TAG, "Host resumed without audio focus, re-requesting")
+      requestAudioFocus()
+    }
+    if (hasAudioFocus && !nativeIsDeviceRunning()) {
+      Log.d(TAG, "Device not running, restarting")
+      nativeStartDevice()
+      Log.d(TAG, "Device running after start: ${nativeIsDeviceRunning()}")
+    }
+  }
+
   override fun onHostPause() {}
 
   override fun onHostDestroy() {

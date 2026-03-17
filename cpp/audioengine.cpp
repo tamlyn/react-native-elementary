@@ -33,13 +33,28 @@ namespace elementary {
 
     void AudioEngine::stopDevice() {
         if (deviceInitialized) {
+            proxy->muted.store(true, std::memory_order_relaxed);
             ma_device_stop(&device);
         }
     }
 
     void AudioEngine::startDevice() {
-        if (deviceInitialized) {
-            ma_device_start(&device);
+        if (!deviceInitialized) return;
+
+        proxy->muted.store(false, std::memory_order_relaxed);
+        ma_result result = ma_device_start(&device);
+
+        if (result != MA_SUCCESS) {
+            // Device start failed — reinitialize
+            ma_device_uninit(&device);
+            deviceInitialized = false;
+
+            deviceConfig.pUserData = proxy.get();
+            result = ma_device_init(nullptr, &deviceConfig, &device);
+            if (result == MA_SUCCESS) {
+                deviceInitialized = true;
+                ma_device_start(&device);
+            }
         }
     }
 
