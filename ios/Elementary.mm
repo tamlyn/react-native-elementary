@@ -50,19 +50,15 @@ RCT_EXPORT_MODULE();
             return noErr;
         }
 
-        // Use the ACTUAL buffer count, not the captured init-time count
-        // (audio session reconfiguration can change channel count)
-        int processChannels = MIN(numOutputChannels, (int)actualChannels);
-
-        for (int channel = 0; channel < processChannels; channel++) {
-          outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
+        for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
+            outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
         }
 
         self.runtime->process(
             inputBuffer,
-            processChannels,
+            numOutputChannels,
             outputBuffer,
-            processChannels,
+            numOutputChannels,
             frameCount,
             nullptr
         );
