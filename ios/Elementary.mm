@@ -89,8 +89,65 @@ RCT_EXPORT_MODULE();
                                              selector:@selector(handleEngineConfigChange:)
                                                  name:AVAudioEngineConfigurationChangeNotification
                                                object:self.audioEngine];
+
+    // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
+    // These nodes queue events on the audio thread; processQueuedEvents drains
+    // them on the main thread and we forward to JS via RCTEventEmitter.
+    [self startEventPolling];
   }
   return self;
+}
+
+- (void)startEventPolling {
+  if (self.eventPollTimer) return;
+
+  dispatch_source_t timer = dispatch_source_create(
+    DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+
+  // ~30Hz (33ms interval) — enough for playhead UI, low overhead
+  dispatch_source_set_timer(timer,
+    dispatch_time(DISPATCH_TIME_NOW, 0),
+    33 * NSEC_PER_MSEC,
+    5 * NSEC_PER_MSEC);
+
+  __weak Elementary *weakSelf = self;
+  dispatch_source_set_event_handler(timer, ^{
+    Elementary *strongSelf = weakSelf;
+    if (!strongSelf || strongSelf.runtime == nullptr) return;
+
+    strongSelf.runtime->processQueuedEvents([strongSelf](std::string const& type, elem::js::Value data) {
+      // Convert C++ event to NSDictionary and send to JS
+      NSString *eventType = [NSString stringWithUTF8String:type.c_str()];
+      NSMutableDictionary *eventData = [NSMutableDictionary new];
+      eventData[@"type"] = eventType;
+
+      if (data.isObject()) {
+        auto const& obj = data.getObject();
+        for (auto const& [key, val] : obj) {
+          NSString *nsKey = [NSString stringWithUTF8String:key.c_str()];
+          if (val.isNumber()) {
+            eventData[nsKey] = @((double)(elem::js::Number) val);
+          } else if (val.isString()) {
+            eventData[nsKey] = [NSString stringWithUTF8String:((std::string)(elem::js::String) val).c_str()];
+          }
+        }
+      } else if (data.isNumber()) {
+        eventData[@"data"] = @((double)(elem::js::Number) data);
+      }
+
+      [strongSelf sendEventWithName:@"elementaryEvent" body:eventData];
+    });
+  });
+
+  dispatch_resume(timer);
+  self.eventPollTimer = timer;
+}
+
+- (void)dealloc {
+  if (self.eventPollTimer) {
+    dispatch_source_cancel(self.eventPollTimer);
+    self.eventPollTimer = nil;
+  }
 }
 
 - (void)handleAudioInterruption:(NSNotification *)notification {
@@ -313,7 +370,7 @@ RCT_EXPORT_METHOD(getBundlePath:(RCTPromiseResolveBlock)resolve
 
 - (NSArray<NSString *> *)supportedEvents
 {
-  return @[@"AudioPlaybackFinished"];
+  return @[@"AudioPlaybackFinished", @"elementaryEvent"];
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED

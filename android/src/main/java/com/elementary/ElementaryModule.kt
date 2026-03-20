@@ -8,6 +8,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -37,6 +39,10 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   private val audioManager = reactContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
   private var audioFocusRequest: AudioFocusRequest? = null
   private var hasAudioFocus = false
+  private var eventPollHandler: Handler? = null
+  private var eventPollRunnable: Runnable? = null
+  private var listenerCount: Int = 0
+  private var hasEventListeners: Boolean = false
 
   private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
     when (focusChange) {
@@ -91,12 +97,17 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun addListener(eventName: String) {
-    // No-op, RN handles subscription tracking
+    listenerCount++
+    hasEventListeners = true
   }
 
   @ReactMethod
   fun removeListeners(count: Double) {
-    // No-op
+    listenerCount -= count.toInt()
+    if (listenerCount <= 0) {
+      listenerCount = 0
+      hasEventListeners = false
+    }
   }
 
   @ReactMethod
@@ -233,12 +244,77 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   override fun onHostPause() {}
 
   override fun onHostDestroy() {
+    stopEventPolling()
     abandonAudioFocus()
     try {
       reactApplicationContext.unregisterReceiver(noisyAudioReceiver)
     } catch (_: IllegalArgumentException) {
       // Receiver was not registered
     }
+  }
+
+  // Event polling: drain el.snapshot / el.meter / el.scope events from
+  // the Elementary C++ runtime and forward to JS at ~30Hz.
+  // Mirrors the iOS dispatch_source_t timer in Elementary.mm.
+  private fun startEventPolling() {
+    if (eventPollHandler != null) return // Already running
+
+    eventPollHandler = Handler(Looper.getMainLooper())
+    eventPollRunnable = object : Runnable {
+      override fun run() {
+        if (!reactApplicationContext.hasActiveCatalystInstance()) return
+        if (!hasEventListeners) {
+          // No JS listeners — skip polling to avoid unnecessary work.
+          // Re-check next tick in case a listener is added.
+          eventPollHandler?.postDelayed(this, 33)
+          return
+        }
+        try {
+          val eventsJson = nativeProcessQueuedEvents()
+          // Parse JSON array and emit each event to JS
+          // Format: [{"type":"snapshot","source":"playhead","data":1.25}, ...]
+          if (eventsJson.length > 2) { // Skip "[]"
+            try {
+              val arr = org.json.JSONArray(eventsJson)
+              for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val params = Arguments.createMap().apply {
+                  val keys = obj.keys()
+                  while (keys.hasNext()) {
+                    val key = keys.next()
+                    val value = obj.get(key)
+                    when (value) {
+                      is String -> putString(key, value)
+                      is Int -> putInt(key, value)
+                      is Double -> putDouble(key, value)
+                      is Boolean -> putBoolean(key, value)
+                      is Long -> putDouble(key, value.toDouble())
+                      else -> putString(key, value.toString())
+                    }
+                  }
+                }
+                sendEvent("elementaryEvent", params)
+              }
+            } catch (e: Exception) {
+              Log.d(TAG, "Event parse error: ${e.message}")
+            }
+          }
+        } catch (e: Exception) {
+          Log.d(TAG, "Event polling error: ${e.message}")
+        }
+        eventPollHandler?.postDelayed(this, 33) // ~30Hz
+      }
+    }
+    // Start immediately, then repeat every 33ms
+    eventPollHandler?.post(eventPollRunnable!!)
+    Log.d(TAG, "Event polling started at ~30Hz")
+  }
+
+  private fun stopEventPolling() {
+    eventPollRunnable?.let { eventPollHandler?.removeCallbacks(it) }
+    eventPollHandler = null
+    eventPollRunnable = null
+    Log.d(TAG, "Event polling stopped")
   }
 
   companion object {
@@ -260,6 +336,11 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
     // Register lifecycle listener for cleanup
     reactContext.addLifecycleEventListener(this)
 
+    // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
+    // These nodes queue events on the audio thread; processQueuedEvents drains
+    // them on the main thread and we forward to JS via RCTDeviceEventEmitter.
+    startEventPolling()
+
     Log.d(TAG, "Audio engine initialized (channels=${nativeGetNumChannels()}, sampleRate=${nativeGetSampleRate()})")
   }
 
@@ -272,4 +353,5 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   external fun nativeStartDevice()
   external fun nativeLoadAudioResource(key: String, filePath: String): AudioResourceInfo?
   external fun nativeUnloadAudioResource(key: String): Boolean
+  external fun nativeProcessQueuedEvents(): String
 }
