@@ -29,7 +29,7 @@ Java_com_elementary_ElementaryModule_nativeApplyInstructions(JNIEnv *env, jclass
 
         auto jsonInstructions = elem::js::parseJSON(instrStr);
 
-        audioEngine->getRuntime().applyInstructions(jsonInstructions);
+        audioEngine->getProxy().applyInstructions(jsonInstructions.getArray());
     }
 }
 

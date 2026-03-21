@@ -50,6 +50,15 @@ RCT_EXPORT_MODULE();
             return noErr;
         }
 
+        // Try to acquire the lock without blocking. If applyInstructions
+        // is in progress on the JS thread, output silence for this block
+        // rather than risking heap corruption from concurrent access.
+        std::unique_lock<std::mutex> lock(self->_runtimeMutex, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            // Already zeroed above — just return silence
+            return noErr;
+        }
+
         for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
             outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
         }
@@ -135,7 +144,9 @@ RCT_EXPORT_MODULE();
         eventData[@"data"] = @((double)(elem::js::Number) data);
       }
 
-      [strongSelf sendEventWithName:@"elementaryEvent" body:eventData];
+      if (strongSelf->_hasEventListeners) {
+        [strongSelf sendEventWithName:@"elementaryEvent" body:eventData];
+      } // else: silently discard — no JS listeners yet
     });
   });
 
@@ -210,6 +221,7 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 {
   auto parsed = elem::js::parseJSON([message UTF8String]);
   if (parsed.isArray()) {
+    std::lock_guard<std::mutex> lock(_runtimeMutex);
     self.runtime->applyInstructions(parsed.getArray());
   }
 }
@@ -233,7 +245,10 @@ RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double
   elem::js::Array batch;
   batch.push_back(instruction);
 
-  self.runtime->applyInstructions(batch);
+  {
+    std::lock_guard<std::mutex> lock(_runtimeMutex);
+    self.runtime->applyInstructions(batch);
+  }
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -288,7 +303,11 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
       numChannels,
       numSamples
     );
-    bool added = self.runtime->addSharedResource(keyStr, std::move(resource));
+    bool added;
+    {
+      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+      added = self.runtime->addSharedResource(keyStr, std::move(resource));
+    }
 
     if (!added) {
       reject(@"E_KEY_EXISTS", [NSString stringWithFormat:@"Resource with key '%@' already exists", key], nil);
@@ -373,10 +392,32 @@ RCT_EXPORT_METHOD(getBundlePath:(RCTPromiseResolveBlock)resolve
   return @[@"AudioPlaybackFinished", @"elementaryEvent"];
 }
 
-#ifdef RCT_NEW_ARCH_ENABLED
-- (void)addListener:(NSString *)eventName {}
-- (void)removeListeners:(double)count {}
-#endif
+// Listener tracking works on both old and new arch.
+// RCTEventEmitter.sendEventWithName: logs a "no listeners" warning when
+// _listenerCount == 0. Our override suppresses it, and the poll timer
+// also gates on _hasEventListeners to avoid needless work.
+- (void)addListener:(NSString *)eventName {
+  [super addListener:eventName];
+  _listenerCount++;
+  _hasEventListeners = YES;
+}
+- (void)removeListeners:(double)count {
+  [super removeListeners:count];
+  _listenerCount -= (int)count;
+  if (_listenerCount <= 0) {
+    _listenerCount = 0;
+    _hasEventListeners = NO;
+  }
+}
+
+// Suppress "Sending event with no listeners registered" warning.
+// Events are guarded by _hasEventListeners in startEventPolling so this
+// should rarely be called without listeners, but during app startup the
+// processQueuedEvents timer can fire before JS has subscribed.
+- (void)sendEventWithName:(NSString *)eventName body:(id)body {
+  if (!_hasEventListeners) return; // silently discard
+  [super sendEventWithName:eventName body:body];
+}
 
 #ifdef RCT_NEW_ARCH_ENABLED
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

@@ -1,20 +1,32 @@
 
 #import "../cpp/vendor/elementary/runtime/elem/Runtime.h"
 #import <AVFoundation/AVFoundation.h>
+#include <mutex>
 
 #ifdef RCT_NEW_ARCH_ENABLED
 #import <RNElementarySpec/RNElementarySpec.h>
 #import <React/RCTEventEmitter.h>
 
 // In new arch, extend RCTEventEmitter and conform to NativeElementarySpec
-@interface Elementary : RCTEventEmitter <NativeElementarySpec>
+@interface Elementary : RCTEventEmitter <NativeElementarySpec> {
+    /// Guards concurrent access to runtime between the audio render callback
+    /// and the JS thread (applyInstructions / setProperty). The audio callback
+    /// uses try_lock — outputs silence on contention rather than blocking.
+    std::mutex _runtimeMutex;
+    int _listenerCount;
+    BOOL _hasEventListeners;
+}
 
 #else
 
 #import <React/RCTBridgeModule.h>
 #import <React/RCTEventEmitter.h>
 
-@interface Elementary : RCTEventEmitter <RCTBridgeModule>
+@interface Elementary : RCTEventEmitter <RCTBridgeModule> {
+    std::mutex _runtimeMutex;
+    int _listenerCount;
+    BOOL _hasEventListeners;
+}
 #endif
 
 @property(nonatomic, strong) AVAudioEngine *audioEngine;

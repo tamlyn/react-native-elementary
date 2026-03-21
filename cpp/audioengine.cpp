@@ -18,6 +18,10 @@ namespace elementary {
         return proxy->runtime;
     }
 
+    DeviceProxy& AudioEngine::getProxy() {
+        return *proxy;
+    }
+
     int AudioEngine::getSampleRate() {
         return device.sampleRate;
     }
