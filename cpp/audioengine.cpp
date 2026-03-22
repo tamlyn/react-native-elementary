@@ -81,7 +81,16 @@ namespace elementary {
             numChannels,
             numSamples
         );
-        bool added = proxy->runtime.addSharedResource(key, std::move(resource));
+        // Hold runtimeMutex while modifying sharedResourceMap.
+        // loadAudioResource runs on a background thread (Kotlin Thread{}),
+        // while applyInstructions runs on the JS thread and reads the same map
+        // via setProperty. Without this lock, concurrent access to the
+        // unordered_map is undefined behavior. Matches iOS (Elementary.mm:308).
+        bool added;
+        {
+            std::lock_guard<std::mutex> lock(proxy->runtimeMutex);
+            added = proxy->runtime.addSharedResource(key, std::move(resource));
+        }
 
         if (!added) {
             result.success = false;
@@ -111,6 +120,7 @@ namespace elementary {
         }
 
         if (found) {
+            std::lock_guard<std::mutex> lock(proxy->runtimeMutex);
             proxy->runtime.pruneSharedResources();
         }
 
