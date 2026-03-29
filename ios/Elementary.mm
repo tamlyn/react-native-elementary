@@ -184,13 +184,29 @@ RCT_EXPORT_MODULE();
 }
 
 - (void)handleEngineConfigChange:(NSNotification *)notification {
-  NSLog(@"[Elementary] Engine configuration changed, restarting...");
-  NSError *error;
-  if (![self.audioEngine startAndReturnError:&error]) {
-    NSLog(@"[Elementary] Failed to restart engine after config change: %@", error.localizedDescription);
-  } else {
-    NSLog(@"[Elementary] Engine restarted after config change");
-  }
+  NSLog(@"[Elementary] Engine configuration changed, stopping engine...");
+
+  // Stop the engine immediately — it's in an inconsistent state after a
+  // config change (route/device/format). Attempting to restart synchronously
+  // inside this notification causes an RPC deadlock: the audio subsystem is
+  // still mid-reconfiguration, so AudioUnitInitialize times out → abort().
+  [self.audioEngine stop];
+
+  // Defer restart to let the audio subsystem finish reconfiguring.
+  // 200ms is enough for the OS to release locks and settle the new route.
+  __weak Elementary *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(200 * NSEC_PER_MSEC)),
+                 dispatch_get_main_queue(), ^{
+    Elementary *strongSelf = weakSelf;
+    if (!strongSelf) return;
+
+    NSError *error;
+    if (![strongSelf.audioEngine startAndReturnError:&error]) {
+      NSLog(@"[Elementary] Failed to restart engine after config change: %@", error.localizedDescription);
+    } else {
+      NSLog(@"[Elementary] Engine restarted after config change");
+    }
+  });
 }
 
 + (BOOL) requiresMainQueueSetup {
