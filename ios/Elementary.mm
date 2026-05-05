@@ -3,14 +3,21 @@
 #include "../cpp/AudioResourceLoader.h"
 #include "../cpp/vendor/elementary/runtime/elem/AudioBufferResource.h"
 
+static Elementary *_sharedInstance = nil;
+
 @implementation Elementary
 
 RCT_EXPORT_MODULE();
+
++ (instancetype)sharedInstance {
+  return _sharedInstance;
+}
 
 - (instancetype)init
 {
   self = [super init];
   if (self) {
+    _sharedInstance = self;
     self.loadedResources = [[NSMutableSet alloc] init];
 
     self.audioEngine = [[AVAudioEngine alloc] init];
@@ -23,13 +30,17 @@ RCT_EXPORT_MODULE();
     const float **inputBuffer = (const float **)calloc(numOutputChannels, sizeof(float *));
     float **outputBuffer = (float **)malloc(numOutputChannels * sizeof(float *));
 
+    NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f", numOutputChannels, outputFormat.sampleRate);
+
     AVAudioSourceNode *sourceNode = [[AVAudioSourceNode alloc] initWithRenderBlock:^OSStatus(
             BOOL * _Nonnull isSilence,
             const AudioTimeStamp * _Nonnull timestamp,
             AVAudioFrameCount frameCount,
             AudioBufferList * _Nonnull audioBufferList) {
 
-        for (UInt32 channel = 0; channel < audioBufferList->mNumberBuffers; channel++) {
+        UInt32 actualChannels = audioBufferList->mNumberBuffers;
+
+        for (UInt32 channel = 0; channel < actualChannels; channel++) {
             memset(audioBufferList->mBuffers[channel].mData, 0,
                    audioBufferList->mBuffers[channel].mDataByteSize);
         }
@@ -38,8 +49,16 @@ RCT_EXPORT_MODULE();
             return noErr;
         }
 
+        // Try to acquire the lock without blocking. If applyInstructions
+        // is in progress on the JS thread, output silence for this block
+        // rather than risking heap corruption from concurrent access.
+        std::unique_lock<std::mutex> lock(self->_runtimeMutex, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            return noErr;
+        }
+
         for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
-          outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
+            outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
         }
 
         self.runtime->process(
@@ -65,12 +84,141 @@ RCT_EXPORT_MODULE();
 
     int bufferSize = 512;
     self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
+
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleAudioInterruption:)
+                                                 name:AVAudioSessionInterruptionNotification
+                                               object:[AVAudioSession sharedInstance]];
+
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(handleEngineConfigChange:)
+                                                 name:AVAudioEngineConfigurationChangeNotification
+                                               object:self.audioEngine];
+
+    // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
+    // These nodes queue events on the audio thread; processQueuedEvents drains
+    // them on the main thread and we forward to JS via RCTEventEmitter.
+    [self startEventPolling];
   }
   return self;
 }
 
+- (void)startEventPolling {
+  if (self.eventPollTimer) return;
+
+  dispatch_source_t timer = dispatch_source_create(
+    DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+
+  // ~30Hz (33ms interval) — enough for playhead UI, low overhead
+  dispatch_source_set_timer(timer,
+    dispatch_time(DISPATCH_TIME_NOW, 0),
+    33 * NSEC_PER_MSEC,
+    5 * NSEC_PER_MSEC);
+
+  __weak Elementary *weakSelf = self;
+  dispatch_source_set_event_handler(timer, ^{
+    Elementary *strongSelf = weakSelf;
+    if (!strongSelf || strongSelf.runtime == nullptr) return;
+
+    strongSelf.runtime->processQueuedEvents([strongSelf](std::string const& type, elem::js::Value data) {
+      NSString *eventType = [NSString stringWithUTF8String:type.c_str()];
+      NSMutableDictionary *eventData = [NSMutableDictionary new];
+      eventData[@"type"] = eventType;
+
+      if (data.isObject()) {
+        auto const& obj = data.getObject();
+        for (auto const& [key, val] : obj) {
+          NSString *nsKey = [NSString stringWithUTF8String:key.c_str()];
+          if (val.isNumber()) {
+            eventData[nsKey] = @((double)(elem::js::Number) val);
+          } else if (val.isString()) {
+            eventData[nsKey] = [NSString stringWithUTF8String:((std::string)(elem::js::String) val).c_str()];
+          }
+        }
+      } else if (data.isNumber()) {
+        eventData[@"data"] = @((double)(elem::js::Number) data);
+      }
+
+      if (strongSelf->_hasEventListeners) {
+        [strongSelf sendEventWithName:@"elementaryEvent" body:eventData];
+      } // else: silently discard — no JS listeners yet
+    });
+  });
+
+  dispatch_resume(timer);
+  self.eventPollTimer = timer;
+}
+
+- (void)dealloc {
+  if (self.eventPollTimer) {
+    dispatch_source_cancel(self.eventPollTimer);
+    self.eventPollTimer = nil;
+  }
+}
+
+- (void)handleAudioInterruption:(NSNotification *)notification {
+  NSDictionary *info = notification.userInfo;
+  AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
+
+  if (type == AVAudioSessionInterruptionTypeEnded) {
+    NSError *error;
+    [[AVAudioSession sharedInstance] setActive:YES error:&error];
+    if (error) {
+      NSLog(@"[Elementary] Failed to reactivate audio session: %@", error.localizedDescription);
+      return;
+    }
+    if (![self.audioEngine startAndReturnError:&error]) {
+      NSLog(@"[Elementary] Failed to restart engine after interruption: %@", error.localizedDescription);
+    } else {
+      NSLog(@"[Elementary] Engine restarted after interruption");
+    }
+  } else {
+    NSLog(@"[Elementary] Audio interrupted");
+  }
+}
+
+- (void)handleEngineConfigChange:(NSNotification *)notification {
+  NSLog(@"[Elementary] Engine configuration changed, stopping engine...");
+
+  // Stop the engine immediately — it's in an inconsistent state after a
+  // config change (route/device/format). Attempting to restart synchronously
+  // inside this notification causes an RPC deadlock: the audio subsystem is
+  // still mid-reconfiguration, so AudioUnitInitialize times out → abort().
+  [self.audioEngine stop];
+
+  // Defer restart to let the audio subsystem finish reconfiguring.
+  // 200ms is enough for the OS to release locks and settle the new route.
+  __weak Elementary *weakSelf = self;
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(200 * NSEC_PER_MSEC)),
+                 dispatch_get_main_queue(), ^{
+    Elementary *strongSelf = weakSelf;
+    if (!strongSelf) return;
+
+    NSError *error;
+    if (![strongSelf.audioEngine startAndReturnError:&error]) {
+      NSLog(@"[Elementary] Failed to restart engine after config change: %@", error.localizedDescription);
+    } else {
+      NSLog(@"[Elementary] Engine restarted after config change");
+    }
+  });
+}
+
 + (BOOL) requiresMainQueueSetup {
   return YES;
+}
+
+#pragma mark - Diagnostics
+
+RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
+                      rejecter:(RCTPromiseRejectBlock)reject)
+{
+  AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
+  resolve(@{
+    @"channels": @(format.channelCount),
+    @"sampleRate": @(format.sampleRate),
+    @"engineRunning": @(self.audioEngine.isRunning),
+    @"runtimeReady": @(self.runtime != nullptr),
+  });
 }
 
 #pragma mark - React Native Methods
@@ -83,7 +231,34 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 {
   auto parsed = elem::js::parseJSON([message UTF8String]);
   if (parsed.isArray()) {
+    std::lock_guard<std::mutex> lock(_runtimeMutex);
     self.runtime->applyInstructions(parsed.getArray());
+  }
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)setProperty:(double)nodeHash key:(NSString *)key value:(double)value
+#else
+RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double)value)
+#endif
+{
+  if (self.runtime == nullptr) return;
+
+  // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
+  // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
+  // The SET_PROPERTY opcode (3) comes from Elementary's Runtime.h.
+  elem::js::Array instruction;
+  instruction.push_back((double)3);
+  instruction.push_back(nodeHash);
+  instruction.push_back(std::string([key UTF8String]));
+  instruction.push_back(value);
+
+  elem::js::Array batch;
+  batch.push_back(instruction);
+
+  {
+    std::lock_guard<std::mutex> lock(_runtimeMutex);
+    self.runtime->applyInstructions(batch);
   }
 }
 
@@ -139,7 +314,11 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
       numChannels,
       numSamples
     );
-    bool added = self.runtime->addSharedResource(keyStr, std::move(resource));
+    bool added;
+    {
+      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+      added = self.runtime->addSharedResource(keyStr, std::move(resource));
+    }
 
     if (!added) {
       reject(@"E_KEY_EXISTS", [NSString stringWithFormat:@"Resource with key '%@' already exists", key], nil);
@@ -205,17 +384,51 @@ RCT_EXPORT_METHOD(getDocumentsDirectory:(RCTPromiseResolveBlock)resolve
   resolve(documentsDirectory);
 }
 
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)getBundlePath:(RCTPromiseResolveBlock)resolve
+               reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(getBundlePath:(RCTPromiseResolveBlock)resolve
+                       rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  NSString *bundlePath = [[NSBundle mainBundle] resourcePath];
+  resolve(bundlePath);
+}
+
 #pragma mark - RCTEventEmitter
 
 - (NSArray<NSString *> *)supportedEvents
 {
-  return @[@"AudioPlaybackFinished"];
+  return @[@"AudioPlaybackFinished", @"elementaryEvent"];
 }
 
-#ifdef RCT_NEW_ARCH_ENABLED
-- (void)addListener:(NSString *)eventName {}
-- (void)removeListeners:(double)count {}
-#endif
+// Listener tracking works on both old and new arch.
+// RCTEventEmitter.sendEventWithName: logs a "no listeners" warning when
+// _listenerCount == 0. Our override suppresses it, and the poll timer
+// also gates on _hasEventListeners to avoid needless work.
+- (void)addListener:(NSString *)eventName {
+  [super addListener:eventName];
+  _listenerCount++;
+  _hasEventListeners = YES;
+}
+- (void)removeListeners:(double)count {
+  [super removeListeners:count];
+  _listenerCount -= (int)count;
+  if (_listenerCount <= 0) {
+    _listenerCount = 0;
+    _hasEventListeners = NO;
+  }
+}
+
+// Suppress "Sending event with no listeners registered" warning.
+// Events are guarded by _hasEventListeners in startEventPolling so this
+// should rarely be called without listeners, but during app startup the
+// processQueuedEvents timer can fire before JS has subscribed.
+- (void)sendEventWithName:(NSString *)eventName body:(id)body {
+  if (!_hasEventListeners) return; // silently discard
+  [super sendEventWithName:eventName body:body];
+}
 
 #ifdef RCT_NEW_ARCH_ENABLED
 - (std::shared_ptr<facebook::react::TurboModule>)getTurboModule:

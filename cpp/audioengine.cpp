@@ -18,8 +18,47 @@ namespace elementary {
         return proxy->runtime;
     }
 
+    DeviceProxy& AudioEngine::getProxy() {
+        return *proxy;
+    }
+
     int AudioEngine::getSampleRate() {
         return device.sampleRate;
+    }
+
+    int AudioEngine::getNumChannels() {
+        return deviceInitialized ? static_cast<int>(device.playback.channels) : 0;
+    }
+
+    bool AudioEngine::isDeviceRunning() {
+        if (!deviceInitialized) return false;
+        return ma_device_get_state(&device) == ma_device_state_started;
+    }
+
+    void AudioEngine::stopDevice() {
+        if (deviceInitialized) {
+            proxy->muted.store(true, std::memory_order_relaxed);
+            ma_device_stop(&device);
+        }
+    }
+
+    void AudioEngine::startDevice() {
+        if (!deviceInitialized) return;
+
+        proxy->muted.store(false, std::memory_order_relaxed);
+        ma_result result = ma_device_start(&device);
+
+        if (result != MA_SUCCESS) {
+            ma_device_uninit(&device);
+            deviceInitialized = false;
+
+            deviceConfig.pUserData = proxy.get();
+            result = ma_device_init(nullptr, &deviceConfig, &device);
+            if (result == MA_SUCCESS) {
+                deviceInitialized = true;
+                ma_device_start(&device);
+            }
+        }
     }
 
     AudioLoadResult AudioEngine::loadAudioResource(const std::string& key, const std::string& filePath) {
@@ -41,7 +80,16 @@ namespace elementary {
             numChannels,
             numSamples
         );
-        bool added = proxy->runtime.addSharedResource(key, std::move(resource));
+        // Hold runtimeMutex while modifying sharedResourceMap.
+        // loadAudioResource runs on a background thread (Kotlin Thread{}),
+        // while applyInstructions runs on the JS thread and reads the same map
+        // via setProperty. Without this lock, concurrent access to the
+        // unordered_map is undefined behavior. Matches iOS loadAudioResource.
+        bool added;
+        {
+            std::lock_guard<std::mutex> lock(proxy->runtimeMutex);
+            added = proxy->runtime.addSharedResource(key, std::move(resource));
+        }
 
         if (!added) {
             result.success = false;
@@ -60,7 +108,6 @@ namespace elementary {
     bool AudioEngine::unloadAudioResource(const std::string& key) {
         bool found = false;
 
-        // Only hold the lock while modifying loadedResources
         {
             std::lock_guard<std::mutex> lock(resourceMutex);
             auto it = loadedResources.find(key);
@@ -71,6 +118,7 @@ namespace elementary {
         }
 
         if (found) {
+            std::lock_guard<std::mutex> lock(proxy->runtimeMutex);
             proxy->runtime.pruneSharedResources();
         }
 
@@ -97,7 +145,6 @@ namespace elementary {
         ma_device_start(&device);
     }
 
-    // Audio callback function
     void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* /* pInput */, ma_uint32 frameCount) {
         auto* proxy = static_cast<DeviceProxy*>(pDevice->pUserData);
         auto numChannels = static_cast<size_t>(pDevice->playback.channels);

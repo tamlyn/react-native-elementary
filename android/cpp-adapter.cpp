@@ -29,7 +29,7 @@ Java_com_elementary_ElementaryModule_nativeApplyInstructions(JNIEnv *env, jclass
 
         auto jsonInstructions = elem::js::parseJSON(instrStr);
 
-        audioEngine->getRuntime().applyInstructions(jsonInstructions);
+        audioEngine->getProxy().applyInstructions(jsonInstructions.getArray());
     }
 }
 
@@ -37,6 +37,34 @@ extern "C"
 JNIEXPORT jint JNICALL
 Java_com_elementary_ElementaryModule_nativeGetSampleRate(JNIEnv *env, jclass type)  {
     return audioEngine.get() ? audioEngine->getSampleRate() : 0;
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_com_elementary_ElementaryModule_nativeGetNumChannels(JNIEnv *env, jclass type) {
+    return audioEngine.get() ? audioEngine->getNumChannels() : 0;
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_com_elementary_ElementaryModule_nativeIsDeviceRunning(JNIEnv *env, jclass type) {
+    return audioEngine.get() ? static_cast<jboolean>(audioEngine->isDeviceRunning()) : JNI_FALSE;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_elementary_ElementaryModule_nativeStopDevice(JNIEnv *env, jclass type) {
+    if (audioEngine) {
+        audioEngine->stopDevice();
+    }
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_elementary_ElementaryModule_nativeStartDevice(JNIEnv *env, jclass type) {
+    if (audioEngine) {
+        audioEngine->startDevice();
+    }
 }
 
 extern "C"
@@ -112,4 +140,49 @@ Java_com_elementary_ElementaryModule_nativeUnloadAudioResource(JNIEnv *env, jcla
 
     bool result = audioEngine->unloadAudioResource(keyStr);
     return result ? JNI_TRUE : JNI_FALSE;
+}
+
+// Process queued runtime events (el.snapshot, el.meter, el.scope, el.fft).
+// Called at ~30Hz by the Kotlin event polling timer.
+// Returns a JSON array of events, each with {type, ...fields}.
+// Kotlin parses and forwards to JS via RCTDeviceEventEmitter.
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_elementary_ElementaryModule_nativeProcessQueuedEvents(JNIEnv *env, jclass type) {
+    if (!audioEngine) return env->NewStringUTF("[]");
+
+    auto& runtime = audioEngine->getRuntime();
+
+    std::string json = "[";
+    bool first = true;
+
+    runtime.processQueuedEvents([&](std::string const& eventType, elem::js::Value data) {
+        if (!first) json += ",";
+        first = false;
+
+        json += "{\"type\":\"" + eventType + "\"";
+
+        if (data.isObject()) {
+            auto const& obj = data.getObject();
+            for (auto const& [key, val] : obj) {
+                json += ",\"" + key + "\":";
+                if (val.isNumber()) {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "%g", (double)(elem::js::Number) val);
+                    json += buf;
+                } else if (val.isString()) {
+                    json += "\"" + (std::string)(elem::js::String) val + "\"";
+                }
+            }
+        } else if (data.isNumber()) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%g", (double)(elem::js::Number) data);
+            json += ",\"data\":" + std::string(buf);
+        }
+
+        json += "}";
+    });
+
+    json += "]";
+    return env->NewStringUTF(json.c_str());
 }
