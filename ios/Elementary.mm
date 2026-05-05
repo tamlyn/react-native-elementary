@@ -38,7 +38,6 @@ RCT_EXPORT_MODULE();
             AVAudioFrameCount frameCount,
             AudioBufferList * _Nonnull audioBufferList) {
 
-        // Safety: ensure buffer list matches expected channel count
         UInt32 actualChannels = audioBufferList->mNumberBuffers;
 
         for (UInt32 channel = 0; channel < actualChannels; channel++) {
@@ -55,7 +54,6 @@ RCT_EXPORT_MODULE();
         // rather than risking heap corruption from concurrent access.
         std::unique_lock<std::mutex> lock(self->_runtimeMutex, std::try_to_lock);
         if (!lock.owns_lock()) {
-            // Already zeroed above — just return silence
             return noErr;
         }
 
@@ -87,13 +85,11 @@ RCT_EXPORT_MODULE();
     int bufferSize = 512;
     self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
 
-    // Handle audio session interruptions (phone calls, background, etc.)
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(handleAudioInterruption:)
                                                  name:AVAudioSessionInterruptionNotification
                                                object:[AVAudioSession sharedInstance]];
 
-    // Handle audio engine configuration changes (headphones plugged/unplugged, etc.)
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(handleEngineConfigChange:)
                                                  name:AVAudioEngineConfigurationChangeNotification
@@ -125,7 +121,6 @@ RCT_EXPORT_MODULE();
     if (!strongSelf || strongSelf.runtime == nullptr) return;
 
     strongSelf.runtime->processQueuedEvents([strongSelf](std::string const& type, elem::js::Value data) {
-      // Convert C++ event to NSDictionary and send to JS
       NSString *eventType = [NSString stringWithUTF8String:type.c_str()];
       NSMutableDictionary *eventData = [NSMutableDictionary new];
       eventData[@"type"] = eventType;
@@ -166,7 +161,6 @@ RCT_EXPORT_MODULE();
   AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
 
   if (type == AVAudioSessionInterruptionTypeEnded) {
-    // Reactivate audio session and restart engine
     NSError *error;
     [[AVAudioSession sharedInstance] setActive:YES error:&error];
     if (error) {
@@ -250,8 +244,9 @@ RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double
 {
   if (self.runtime == nullptr) return;
 
-  // Build a SET_PROPERTY instruction batch: [[3, nodeHash, key, value]]
-  // InstructionType::SET_PROPERTY = 3
+  // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
+  // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
+  // The SET_PROPERTY opcode (3) comes from Elementary's Runtime.h.
   elem::js::Array instruction;
   instruction.push_back((double)3);
   instruction.push_back(nodeHash);

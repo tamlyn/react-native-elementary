@@ -49,7 +49,6 @@ namespace elementary {
         ma_result result = ma_device_start(&device);
 
         if (result != MA_SUCCESS) {
-            // Device start failed — reinitialize
             ma_device_uninit(&device);
             deviceInitialized = false;
 
@@ -85,7 +84,7 @@ namespace elementary {
         // loadAudioResource runs on a background thread (Kotlin Thread{}),
         // while applyInstructions runs on the JS thread and reads the same map
         // via setProperty. Without this lock, concurrent access to the
-        // unordered_map is undefined behavior. Matches iOS (Elementary.mm:308).
+        // unordered_map is undefined behavior. Matches iOS loadAudioResource.
         bool added;
         {
             std::lock_guard<std::mutex> lock(proxy->runtimeMutex);
@@ -109,7 +108,6 @@ namespace elementary {
     bool AudioEngine::unloadAudioResource(const std::string& key) {
         bool found = false;
 
-        // Only hold the lock while modifying loadedResources
         {
             std::lock_guard<std::mutex> lock(resourceMutex);
             auto it = loadedResources.find(key);
@@ -147,7 +145,6 @@ namespace elementary {
         ma_device_start(&device);
     }
 
-    // Audio callback function
     void AudioEngine::audioCallback(ma_device* pDevice, void* pOutput, const void* /* pInput */, ma_uint32 frameCount) {
         auto* proxy = static_cast<DeviceProxy*>(pDevice->pUserData);
         auto numChannels = static_cast<size_t>(pDevice->playback.channels);

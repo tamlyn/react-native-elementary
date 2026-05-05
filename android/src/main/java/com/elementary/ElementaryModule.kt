@@ -20,9 +20,6 @@ import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 
-/**
- * Data class for audio resource information returned from native code
- */
 data class AudioResourceInfo(
   val success: Boolean,
   val error: String,
@@ -62,7 +59,6 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
         nativeStopDevice()
       }
       AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-        // Could lower volume instead, but for an audio engine it's safer to stop
         Log.d(TAG, "Audio focus lost (duck), stopping device")
         hasAudioFocus = false
         nativeStopDevice()
@@ -70,7 +66,6 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
     }
   }
 
-  // Handle headphone disconnect (equivalent to iOS AVAudioEngineConfigurationChangeNotification)
   private val noisyAudioReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
       if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
@@ -163,8 +158,9 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun setProperty(nodeHash: Double, key: String, value: Double) {
-    // Build a SET_PROPERTY instruction batch: [[3, nodeHash, key, value]]
-    // InstructionType::SET_PROPERTY = 3
+    // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
+    // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
+    // The SET_PROPERTY opcode (3) comes from Elementary's Runtime.h.
     val instruction = "[3,${nodeHash.toInt()},\"$key\",$value]"
     val batch = "[$instruction]"
     nativeApplyInstructions(batch)
@@ -181,7 +177,6 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
     promise.resolve(info)
   }
 
-  // Helper to emit events
   private fun sendEvent(eventName: String, params: WritableMap?) {
     reactApplicationContext
       .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -228,7 +223,6 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
     hasAudioFocus = false
   }
 
-  // LifecycleEventListener
   override fun onHostResume() {
     if (!hasAudioFocus) {
       Log.d(TAG, "Host resumed without audio focus, re-requesting")
@@ -271,7 +265,6 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
         }
         try {
           val eventsJson = nativeProcessQueuedEvents()
-          // Parse JSON array and emit each event to JS
           // Format: [{"type":"snapshot","source":"playhead","data":1.25}, ...]
           if (eventsJson.length > 2) { // Skip "[]"
             try {
@@ -305,7 +298,6 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
         eventPollHandler?.postDelayed(this, 33) // ~30Hz
       }
     }
-    // Start immediately, then repeat every 33ms
     eventPollHandler?.post(eventPollRunnable!!)
     Log.d(TAG, "Event polling started at ~30Hz")
   }
@@ -326,14 +318,11 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
     System.loadLibrary("react-native-elementary")
     nativeStartAudioEngine()
 
-    // Request audio focus
     requestAudioFocus()
 
-    // Register for headphone disconnect events
     val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
     reactContext.registerReceiver(noisyAudioReceiver, filter)
 
-    // Register lifecycle listener for cleanup
     reactContext.addLifecycleEventListener(this)
 
     // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).

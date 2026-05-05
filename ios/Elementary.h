@@ -7,7 +7,6 @@
 #import <RNElementarySpec/RNElementarySpec.h>
 #import <React/RCTEventEmitter.h>
 
-// In new arch, extend RCTEventEmitter and conform to NativeElementarySpec
 @interface Elementary : RCTEventEmitter <NativeElementarySpec> {
     /// Guards concurrent access to runtime between the audio render callback
     /// and the JS thread (applyInstructions / setProperty). The audio callback
