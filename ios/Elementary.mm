@@ -20,6 +20,12 @@ RCT_EXPORT_MODULE();
     _sharedInstance = self;
     self.loadedResources = [[NSMutableSet alloc] init];
 
+    // Configure the audio session for playback. Apps that need a different
+    // category (e.g. PlayAndRecord) or mute-switch behavior should set up
+    // AVAudioSession themselves before the module initializes; this method
+    // will skip its configuration if the session is already active.
+    [self configureAudioSession];
+
     self.audioEngine = [[AVAudioEngine alloc] init];
 
     AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
@@ -30,7 +36,8 @@ RCT_EXPORT_MODULE();
     const float **inputBuffer = (const float **)calloc(numOutputChannels, sizeof(float *));
     float **outputBuffer = (float **)malloc(numOutputChannels * sizeof(float *));
 
-    NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f", numOutputChannels, outputFormat.sampleRate);
+    NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f, IOBufferDuration=%.4fs",
+          numOutputChannels, outputFormat.sampleRate, [AVAudioSession sharedInstance].IOBufferDuration);
 
     AVAudioSourceNode *sourceNode = [[AVAudioSourceNode alloc] initWithRenderBlock:^OSStatus(
             BOOL * _Nonnull isSilence,
@@ -76,13 +83,15 @@ RCT_EXPORT_MODULE();
     [self.audioEngine attachNode:sourceNode];
     [self.audioEngine connect:sourceNode to:mixerNode format:outputFormat];
 
-    NSError *error;
+    NSError *error = nil;
     if (![self.audioEngine startAndReturnError:&error]) {
       NSLog(@"Error starting audio engine: %@", error.localizedDescription);
       return nil;
     }
 
-    int bufferSize = 512;
+    // Use granted IOBufferDuration — iOS may not honor the preferred value exactly.
+    int bufferSize = [self computeBufferSizeFromSession];
+    NSLog(@"[Elementary] Runtime block size: %d frames", bufferSize);
     self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
 
     [[NSNotificationCenter defaultCenter] addObserver:self
@@ -161,11 +170,11 @@ RCT_EXPORT_MODULE();
   AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
 
   if (type == AVAudioSessionInterruptionTypeEnded) {
-    NSError *error;
+    NSError *error = nil;
     [[AVAudioSession sharedInstance] setActive:YES error:&error];
     if (error) {
       NSLog(@"[Elementary] Failed to reactivate audio session: %@", error.localizedDescription);
-      return;
+      error = nil;
     }
     if (![self.audioEngine startAndReturnError:&error]) {
       NSLog(@"[Elementary] Failed to restart engine after interruption: %@", error.localizedDescription);
@@ -194,17 +203,88 @@ RCT_EXPORT_MODULE();
     Elementary *strongSelf = weakSelf;
     if (!strongSelf) return;
 
-    NSError *error;
+    NSError *error = nil;
     if (![strongSelf.audioEngine startAndReturnError:&error]) {
       NSLog(@"[Elementary] Failed to restart engine after config change: %@", error.localizedDescription);
     } else {
       NSLog(@"[Elementary] Engine restarted after config change");
+
+      // Recreate runtime with updated sample rate and block size.
+      // After a route change (e.g. Bluetooth/AirPlay), the session's
+      // IOBufferDuration and sample rate may differ from what we used at init.
+      AVAudioFormat *newFormat = [strongSelf.audioEngine.outputNode outputFormatForBus:0];
+      int newBufferSize = [strongSelf computeBufferSizeFromSession];
+      NSLog(@"[Elementary] Recreating runtime: sampleRate=%.0f, blockSize=%d", newFormat.sampleRate, newBufferSize);
+      {
+        std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
+        strongSelf.runtime = std::make_shared<elem::Runtime<float>>(newFormat.sampleRate, newBufferSize);
+      }
     }
   });
 }
 
 + (BOOL) requiresMainQueueSetup {
   return YES;
+}
+
+#pragma mark - Audio Session Configuration
+
+- (void)configureAudioSession {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+
+  // If the app has already configured the session (non-default category
+  // or already active), don't overwrite its settings — just request our
+  // preferred buffer duration and return.
+  if ([session.category isEqualToString:AVAudioSessionCategoryPlayback] ||
+      [session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord] ||
+      [session.category isEqualToString:AVAudioSessionCategoryAmbient] ||
+      [session.category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
+    if (session.isInputAvailable || session.isActive) {
+      // App has already set up audio — just ensure our preferred buffer size.
+      NSError *error = nil;
+      [session setPreferredIOBufferDuration:(512.0 / 48000.0) error:&error];
+      if (error) {
+        NSLog(@"[Elementary] Failed to set preferred IO buffer duration: %@", error);
+      }
+      NSLog(@"[Elementary] Using existing audio session (category=%@, IOBufferDuration=%.4fs)",
+            session.category, session.IOBufferDuration);
+      return;
+    }
+  }
+
+  NSError *error = nil;
+  [session setCategory:AVAudioSessionCategoryPlayback
+                  mode:AVAudioSessionModeDefault
+               options:AVAudioSessionCategoryOptionMixWithOthers |
+                       AVAudioSessionCategoryOptionAllowBluetoothA2DP
+                 error:&error];
+  if (error) {
+    NSLog(@"[Elementary] Failed to set audio session category: %@", error);
+    error = nil;
+  }
+
+  [session setPreferredIOBufferDuration:(512.0 / 48000.0) error:&error];
+  if (error) {
+    NSLog(@"[Elementary] Failed to set preferred IO buffer duration: %@", error);
+    error = nil;
+  }
+
+  [session setActive:YES error:&error];
+  if (error) {
+    NSLog(@"[Elementary] Failed to activate audio session: %@", error);
+    error = nil;
+  }
+
+  NSLog(@"[Elementary] Configured audio session: category=%@, IOBufferDuration=%.4fs",
+        session.category, session.IOBufferDuration);
+}
+
+- (int)computeBufferSizeFromSession {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
+  int bufferSize = (int)round(outputFormat.sampleRate * session.IOBufferDuration);
+  if (bufferSize <= 0 || bufferSize > 4096) bufferSize = 512; // safety fallback
+  return bufferSize;
 }
 
 #pragma mark - Diagnostics
