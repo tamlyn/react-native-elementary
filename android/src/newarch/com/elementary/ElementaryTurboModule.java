@@ -24,6 +24,26 @@ public class ElementaryTurboModule extends NativeElementarySpec {
     }
 
     @Override
+    public void activateAudioSession(Promise promise) {
+        module.activateAudioSession(promise);
+    }
+
+    @Override
+    public void deactivateAudioSession(Promise promise) {
+        module.deactivateAudioSession(promise);
+    }
+
+    @Override
+    public void configureAudioSession(String category, String mode, com.facebook.react.bridge.ReadableArray options) {
+        module.configureAudioSession(category, mode, options);
+    }
+
+    @Override
+    public void disableAudioSessionManagement() {
+        module.disableAudioSessionManagement();
+    }
+
+    @Override
     public void addListener(String eventName) {
         module.addListener(eventName);
     }

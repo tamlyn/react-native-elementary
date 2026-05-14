@@ -12,6 +12,14 @@ export type AudioResourceInfo = {
 
 export interface Spec extends TurboModule {
   getSampleRate(): Promise<number>;
+  activateAudioSession(): Promise<boolean>;
+  deactivateAudioSession(): Promise<boolean>;
+  configureAudioSession(
+    category: string,
+    mode: string,
+    options: string[]
+  ): void;
+  disableAudioSessionManagement(): void;
   applyInstructions(message: string): void;
 
   // Real-time property updates (no graph re-render, audio-thread safe)
