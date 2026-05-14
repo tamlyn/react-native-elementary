@@ -232,24 +232,26 @@ RCT_EXPORT_MODULE();
 - (void)configureAudioSession {
   AVAudioSession *session = [AVAudioSession sharedInstance];
 
-  // If the app has already configured the session (non-default category
-  // or already active), don't overwrite its settings — just request our
-  // preferred buffer duration and return.
-  if ([session.category isEqualToString:AVAudioSessionCategoryPlayback] ||
-      [session.category isEqualToString:AVAudioSessionCategoryPlayAndRecord] ||
-      [session.category isEqualToString:AVAudioSessionCategoryAmbient] ||
-      [session.category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
-    if (session.isInputAvailable || session.isActive) {
-      // App has already set up audio — just ensure our preferred buffer size.
-      NSError *error = nil;
-      [session setPreferredIOBufferDuration:(512.0 / 48000.0) error:&error];
-      if (error) {
-        NSLog(@"[Elementary] Failed to set preferred IO buffer duration: %@", error);
-      }
-      NSLog(@"[Elementary] Using existing audio session (category=%@, IOBufferDuration=%.4fs)",
-            session.category, session.IOBufferDuration);
-      return;
+  // If the app has already configured a non-default category, don't overwrite
+  // it. The iOS default is SoloAmbient, so an app that explicitly wants
+  // SoloAmbient should configure the session after Elementary initializes.
+  if (![session.category isEqualToString:AVAudioSessionCategorySoloAmbient]) {
+    NSError *error = nil;
+    [session setPreferredIOBufferDuration:(512.0 / 48000.0) error:&error];
+    if (error) {
+      NSLog(@"[Elementary] Failed to set preferred IO buffer duration: %@", error);
+      error = nil;
     }
+
+    [session setActive:YES error:&error];
+    if (error) {
+      NSLog(@"[Elementary] Failed to activate existing audio session: %@", error);
+      error = nil;
+    }
+
+    NSLog(@"[Elementary] Using existing audio session (category=%@, IOBufferDuration=%.4fs)",
+          session.category, session.IOBufferDuration);
+    return;
   }
 
   NSError *error = nil;
