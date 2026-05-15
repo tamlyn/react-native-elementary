@@ -363,11 +363,9 @@ RCT_EXPORT_MODULE();
     } else if ([option isEqualToString:@"allowBluetoothA2DP"]) {
       options |= AVAudioSessionCategoryOptionAllowBluetoothA2DP;
     } else if ([option isEqualToString:@"allowBluetoothHFP"]) {
-      if (@available(iOS 18.0, *)) {
-        options |= AVAudioSessionCategoryOptionAllowBluetoothHFP;
-      } else {
-        options |= (AVAudioSessionCategoryOptions)0x4;
-      }
+      // AVAudioSessionCategoryOptionAllowBluetoothHFP is only available from
+      // iOS 18 / Xcode 26+. The underlying value is 0x4 on all iOS versions.
+      options |= (AVAudioSessionCategoryOptions)0x4;
     } else if ([option isEqualToString:@"allowAirPlay"]) {
       options |= AVAudioSessionCategoryOptionAllowAirPlay;
     } else if ([option isEqualToString:@"interruptSpokenAudioAndMixWithOthers"]) {
