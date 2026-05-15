@@ -187,14 +187,14 @@ RCT_EXPORT_MODULE();
   AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
 
   if (type == AVAudioSessionInterruptionTypeEnded) {
-    NSError *error = nil;
-    [self setAudioSessionActive:YES error:&error];
-    if (error) {
-      NSLog(@"[Elementary] Failed to reactivate audio session: %@", error.localizedDescription);
-      error = nil;
+    NSError *activateError = nil;
+    if (![self setAudioSessionActive:YES error:&activateError]) {
+      NSLog(@"[Elementary] Failed to reactivate audio session: %@", activateError.localizedDescription);
+      return;
     }
-    if (![self.audioEngine startAndReturnError:&error]) {
-      NSLog(@"[Elementary] Failed to restart engine after interruption: %@", error.localizedDescription);
+    NSError *engineError = nil;
+    if (![self.audioEngine startAndReturnError:&engineError]) {
+      NSLog(@"[Elementary] Failed to restart engine after interruption: %@", engineError.localizedDescription);
     } else {
       NSLog(@"[Elementary] Engine restarted after interruption");
     }
@@ -266,17 +266,26 @@ RCT_EXPORT_MODULE();
 
   AVAudioSession *session = [AVAudioSession sharedInstance];
   if (![self desiredAudioSessionOptionsAreSet]) {
+    NSError *categoryError = nil;
     if (![session setCategory:self.desiredAudioSessionCategory
                          mode:self.desiredAudioSessionMode
                       options:self.desiredAudioSessionOptions
-                        error:error]) {
+                        error:&categoryError]) {
+      if (error) *error = categoryError;
       return NO;
     }
   }
 
-  if (![session setPreferredIOBufferDuration:(512.0 / 48000.0) error:error]) {
+  // Compute the preferred buffer duration from the actual session sample rate
+  // (after category is set) so the requested buffer equals the intended
+  // 512 frames regardless of device sample rate.
+  double preferredBufferDuration = 512.0 / session.sampleRate;
+  NSError *bufferError = nil;
+  if (![session setPreferredIOBufferDuration:preferredBufferDuration error:&bufferError]) {
+    if (error) *error = bufferError;
     return NO;
   }
+
 
   NSLog(@"[Elementary] Configured audio session: category=%@, mode=%@, options=%lu, IOBufferDuration=%.4fs",
         session.category, session.mode, (unsigned long)session.categoryOptions, session.IOBufferDuration);
@@ -288,9 +297,27 @@ RCT_EXPORT_MODULE();
     return YES;
   }
 
+  // Serialize audio session state changes on the main queue to avoid data
+  // races between interruption notifications, dispatch_after blocks, and
+  // JS-thread exported methods.
+  if ([NSThread isMainThread]) {
+    return [self setAudioSessionActiveOnMainThread:active error:error];
+  } else {
+    __block BOOL result = NO;
+    __block NSError *blockError = nil;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      result = [self setAudioSessionActiveOnMainThread:active error:&blockError];
+    });
+    if (error && blockError) *error = blockError;
+    return result;
+  }
+}
+
+- (BOOL)setAudioSessionActiveOnMainThread:(BOOL)active error:(NSError **)error {
   if (self.audioSessionActive == active) {
     return YES;
   }
+
 
   if (active && ![self configureAudioSessionWithError:error]) {
     return NO;
@@ -336,7 +363,11 @@ RCT_EXPORT_MODULE();
     } else if ([option isEqualToString:@"allowBluetoothA2DP"]) {
       options |= AVAudioSessionCategoryOptionAllowBluetoothA2DP;
     } else if ([option isEqualToString:@"allowBluetoothHFP"]) {
-      options |= 0x4;
+      if (@available(iOS 18.0, *)) {
+        options |= AVAudioSessionCategoryOptionAllowBluetoothHFP;
+      } else {
+        options |= (AVAudioSessionCategoryOptions)0x4;
+      }
     } else if ([option isEqualToString:@"allowAirPlay"]) {
       options |= AVAudioSessionCategoryOptionAllowAirPlay;
     } else if ([option isEqualToString:@"interruptSpokenAudioAndMixWithOthers"]) {

@@ -88,7 +88,7 @@ export function configureAudioSession({
   iosCategory = 'playback',
   iosMode = 'default',
   iosOptions = ['mixWithOthers', 'allowBluetoothA2DP'],
-}: AudioSessionOptions): void {
+}: AudioSessionOptions = {}): void {
   ElementaryModule.configureAudioSession(iosCategory, iosMode, iosOptions);
 }
 
