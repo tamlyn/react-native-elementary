@@ -68,6 +68,55 @@ disableAudioSessionManagement();
 you need to explicitly control the iOS session lifecycle. These audio-session
 helpers are no-ops on Android.
 
+## Event polling
+
+By default, `react-native-elementary` does **not** start polling for runtime events. This avoids unnecessary JS thread overhead for apps that only use `setProperty` for real-time updates and don't need `el.snapshot`, `el.meter`, or `el.scope` data.
+
+If your app needs snapshot/meter/scope events, opt in explicitly:
+
+```tsx
+import { startEventPolling, stopEventPolling, configureEventPolling } from 'react-native-elementary';
+
+// Start polling at default ~30Hz (33ms)
+await startEventPolling();
+
+// Or configure a different rate before starting:
+await configureEventPolling(100); // 100ms ≈ 10Hz (drift correction only)
+await startEventPolling();
+
+// Stop polling when you don't need events anymore:
+await stopEventPolling();
+```
+
+### Listening for events
+
+Events are emitted on the `elementaryEvent` channel via `NativeEventEmitter`. Each callback receives a single event object with a `type` field and event-specific data:
+
+```tsx
+import { NativeEventEmitter, NativeModules } from 'react-native';
+
+const elementaryEmitter = new NativeEventEmitter(NativeModules.Elementary);
+
+const subscription = elementaryEmitter.addListener('elementaryEvent', (event) => {
+  // event = { type: 'snapshot', source: 'playhead', data: 1.25 }
+  // event = { type: 'meter',   source: 'level',   data: 0.75 }
+  // event = { type: 'scope',  data: [...] }
+  console.log(event.type, event);
+});
+
+// Don't forget to remove on unmount:
+subscription.remove();
+```
+
+### Polling rates
+
+| Interval | Rate | Use case |
+|----------|------|----------|
+| 33ms | ~30Hz | Smooth metering, playhead UI |
+| 100ms | ~10Hz | Drift correction only, minimal overhead |
+
+Values are clamped to 10–1000ms.
+
 ## Contributing
 
 See the [contributing guide](CONTRIBUTING.md) to learn how to contribute to the repository and the development workflow.

@@ -40,8 +40,12 @@
 @property(nonatomic, assign) AVAudioSessionCategoryOptions desiredAudioSessionOptions;
 
 /// Timer for processing queued runtime events (el.meter, el.snapshot, el.scope, el.fft).
-/// Fires at ~30Hz on the main thread, drains the event queue and forwards to JS.
+/// Started by startEventPolling (not auto-started — consumer must opt in).
 @property(nonatomic, strong) dispatch_source_t eventPollTimer;
+
+/// Polling interval in milliseconds (default: 33ms ≈ 30Hz).
+/// Set before startEventPolling, or call configureEventPolling to change at runtime.
+@property(nonatomic, assign) NSUInteger eventPollIntervalMs;
 
 /// Shared instance for native code to access the runtime (e.g. for real-time MIDI triggering)
 + (instancetype)sharedInstance;
