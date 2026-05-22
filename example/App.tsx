@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { StyleSheet, View, Text, Button, Platform } from 'react-native';
 import {
   useRenderer,
+  configureAudioSession,
   loadAudioResource,
   unloadAudioResource,
   AudioResourceInfo,
@@ -12,6 +13,12 @@ import RNFS from 'react-native-fs';
 import { el } from '@elemaudio/core';
 
 const SAMPLE_FILES = ['kick.wav', 'snare.wav', 'hihat.wav'] as const;
+
+configureAudioSession({
+  iosCategory: 'playback',
+  iosMode: 'default',
+  iosOptions: ['mixWithOthers', 'allowBluetoothA2DP'],
+});
 
 const getSamplePath = async (filename: string): Promise<string> => {
   if (Platform.OS === 'android') {

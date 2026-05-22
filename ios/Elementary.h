@@ -29,8 +29,15 @@
 #endif
 
 @property(nonatomic, strong) AVAudioEngine *audioEngine;
+@property(nonatomic, assign) BOOL audioEngineInitialized;
 @property(nonatomic, assign) std::shared_ptr<elem::Runtime<float>> runtime;
 @property(nonatomic, strong) NSMutableSet<NSString *> *loadedResources;
+
+@property(nonatomic, assign) BOOL shouldManageAudioSession;
+@property(nonatomic, assign) BOOL audioSessionActive;
+@property(nonatomic, copy) AVAudioSessionCategory desiredAudioSessionCategory;
+@property(nonatomic, copy) AVAudioSessionMode desiredAudioSessionMode;
+@property(nonatomic, assign) AVAudioSessionCategoryOptions desiredAudioSessionOptions;
 
 /// Timer for processing queued runtime events (el.meter, el.snapshot, el.scope, el.fft).
 /// Fires at ~30Hz on the main thread, drains the event queue and forwards to JS.

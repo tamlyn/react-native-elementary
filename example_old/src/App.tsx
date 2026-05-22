@@ -1,8 +1,14 @@
 import * as React from 'react';
 
 import { StyleSheet, View, Text, Button } from 'react-native';
-import { useRenderer } from 'react-native-elementary';
+import { configureAudioSession, useRenderer } from 'react-native-elementary';
 import { el } from '@elemaudio/core';
+
+configureAudioSession({
+  iosCategory: 'playback',
+  iosMode: 'default',
+  iosOptions: ['mixWithOthers', 'allowBluetoothA2DP'],
+});
 
 export default function App() {
   const { core } = useRenderer();

@@ -5,6 +5,40 @@ import NativeElementary, { type AudioResourceInfo } from './NativeElementary';
 
 export type { AudioResourceInfo };
 
+export type IOSAudioSessionCategory =
+  | 'ambient'
+  | 'soloAmbient'
+  | 'playback'
+  | 'record'
+  | 'playAndRecord'
+  | 'multiRoute';
+
+export type IOSAudioSessionMode =
+  | 'default'
+  | 'voiceChat'
+  | 'videoChat'
+  | 'gameChat'
+  | 'measurement'
+  | 'moviePlayback'
+  | 'spokenAudio'
+  | 'voicePrompt'
+  | 'videoRecording';
+
+export type IOSAudioSessionOption =
+  | 'mixWithOthers'
+  | 'duckOthers'
+  | 'defaultToSpeaker'
+  | 'allowBluetoothA2DP'
+  | 'allowBluetoothHFP'
+  | 'allowAirPlay'
+  | 'interruptSpokenAudioAndMixWithOthers';
+
+export type AudioSessionOptions = {
+  iosCategory?: IOSAudioSessionCategory;
+  iosMode?: IOSAudioSessionMode;
+  iosOptions?: IOSAudioSessionOption[];
+};
+
 const LINKING_ERROR =
   `The package 'react-native-elementary' doesn't seem to be linked. Make sure: \n\n` +
   Platform.select({ ios: "- You have run 'pod install'\n", default: '' }) +
@@ -27,6 +61,44 @@ const ElementaryModule =
 /** Returns the device audio sample rate */
 export function getSampleRate(): Promise<number> {
   return ElementaryModule.getSampleRate();
+}
+
+/**
+ * Activate Elementary's native iOS audio session.
+ * No-ops on Android.
+ */
+export function activateAudioSession(): Promise<boolean> {
+  return ElementaryModule.activateAudioSession();
+}
+
+/**
+ * Deactivate Elementary's native iOS audio session.
+ * No-ops on Android.
+ */
+export function deactivateAudioSession(): Promise<boolean> {
+  return ElementaryModule.deactivateAudioSession();
+}
+
+/**
+ * Configure Elementary's native iOS audio session before creating/using the renderer.
+ * Defaults match Elementary's playback-oriented setup.
+ * No-ops on Android.
+ */
+export function configureAudioSession({
+  iosCategory = 'playback',
+  iosMode = 'default',
+  iosOptions = ['mixWithOthers', 'allowBluetoothA2DP'],
+}: AudioSessionOptions = {}): void {
+  ElementaryModule.configureAudioSession(iosCategory, iosMode, iosOptions);
+}
+
+/**
+ * Disable Elementary's internal iOS audio session management.
+ * Use this when the host app or another audio library owns AVAudioSession.
+ * No-ops on Android.
+ */
+export function disableAudioSessionManagement(): void {
+  ElementaryModule.disableAudioSessionManagement();
 }
 
 /** Load an audio file into the VFS for use with el.sample(), el.table(), etc. */

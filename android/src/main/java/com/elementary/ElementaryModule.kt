@@ -91,6 +91,26 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
+  fun activateAudioSession(promise: Promise) {
+    promise.resolve(true)
+  }
+
+  @ReactMethod
+  fun deactivateAudioSession(promise: Promise) {
+    promise.resolve(true)
+  }
+
+  @ReactMethod
+  fun configureAudioSession(category: String, mode: String, options: com.facebook.react.bridge.ReadableArray) {
+    // iOS-only API. Android audio focus is managed by requestAudioFocus()/abandonAudioFocus().
+  }
+
+  @ReactMethod
+  fun disableAudioSessionManagement() {
+    // iOS-only API. Android keeps its existing audio focus behavior.
+  }
+
+  @ReactMethod
   fun addListener(eventName: String) {
     listenerCount++
     hasEventListeners = true

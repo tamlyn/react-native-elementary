@@ -19,88 +19,114 @@ RCT_EXPORT_MODULE();
   if (self) {
     _sharedInstance = self;
     self.loadedResources = [[NSMutableSet alloc] init];
-
-    self.audioEngine = [[AVAudioEngine alloc] init];
-
-    AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
-    AVAudioMixerNode *mixerNode = self.audioEngine.mainMixerNode;
-
-    int numOutputChannels = outputFormat.channelCount;
-
-    const float **inputBuffer = (const float **)calloc(numOutputChannels, sizeof(float *));
-    float **outputBuffer = (float **)malloc(numOutputChannels * sizeof(float *));
-
-    NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f", numOutputChannels, outputFormat.sampleRate);
-
-    AVAudioSourceNode *sourceNode = [[AVAudioSourceNode alloc] initWithRenderBlock:^OSStatus(
-            BOOL * _Nonnull isSilence,
-            const AudioTimeStamp * _Nonnull timestamp,
-            AVAudioFrameCount frameCount,
-            AudioBufferList * _Nonnull audioBufferList) {
-
-        UInt32 actualChannels = audioBufferList->mNumberBuffers;
-
-        for (UInt32 channel = 0; channel < actualChannels; channel++) {
-            memset(audioBufferList->mBuffers[channel].mData, 0,
-                   audioBufferList->mBuffers[channel].mDataByteSize);
-        }
-
-        if (self.runtime == nullptr) {
-            return noErr;
-        }
-
-        // Try to acquire the lock without blocking. If applyInstructions
-        // is in progress on the JS thread, output silence for this block
-        // rather than risking heap corruption from concurrent access.
-        std::unique_lock<std::mutex> lock(self->_runtimeMutex, std::try_to_lock);
-        if (!lock.owns_lock()) {
-            return noErr;
-        }
-
-        for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
-            outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
-        }
-
-        self.runtime->process(
-            inputBuffer,
-            numOutputChannels,
-            outputBuffer,
-            numOutputChannels,
-            frameCount,
-            nullptr
-        );
-
-        return noErr;
-    }];
-
-    [self.audioEngine attachNode:sourceNode];
-    [self.audioEngine connect:sourceNode to:mixerNode format:outputFormat];
-
-    NSError *error;
-    if (![self.audioEngine startAndReturnError:&error]) {
-      NSLog(@"Error starting audio engine: %@", error.localizedDescription);
-      return nil;
-    }
-
-    int bufferSize = 512;
-    self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
-
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(handleAudioInterruption:)
-                                                 name:AVAudioSessionInterruptionNotification
-                                               object:[AVAudioSession sharedInstance]];
-
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(handleEngineConfigChange:)
-                                                 name:AVAudioEngineConfigurationChangeNotification
-                                               object:self.audioEngine];
-
-    // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
-    // These nodes queue events on the audio thread; processQueuedEvents drains
-    // them on the main thread and we forward to JS via RCTEventEmitter.
-    [self startEventPolling];
+    self.shouldManageAudioSession = YES;
+    self.audioSessionActive = NO;
+    self.desiredAudioSessionCategory = AVAudioSessionCategoryPlayback;
+    self.desiredAudioSessionMode = AVAudioSessionModeDefault;
+    self.desiredAudioSessionOptions = AVAudioSessionCategoryOptionMixWithOthers |
+                                      AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+    self.audioEngineInitialized = NO;
   }
   return self;
+}
+
+- (BOOL)initializeAudioEngineIfNeeded {
+  if (self.audioEngineInitialized) {
+    return YES;
+  }
+
+  // Configure and activate the audio session before creating AVAudioEngine.
+  NSError *sessionError = nil;
+  [self setAudioSessionActive:YES error:&sessionError];
+  if (sessionError) {
+    NSLog(@"[Elementary] Failed to activate audio session: %@", sessionError.localizedDescription);
+  }
+
+  self.audioEngine = [[AVAudioEngine alloc] init];
+
+  AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
+  AVAudioMixerNode *mixerNode = self.audioEngine.mainMixerNode;
+
+  int numOutputChannels = outputFormat.channelCount;
+
+  const float **inputBuffer = (const float **)calloc(numOutputChannels, sizeof(float *));
+  float **outputBuffer = (float **)malloc(numOutputChannels * sizeof(float *));
+
+  NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f, IOBufferDuration=%.4fs",
+        numOutputChannels, outputFormat.sampleRate, [AVAudioSession sharedInstance].IOBufferDuration);
+
+  AVAudioSourceNode *sourceNode = [[AVAudioSourceNode alloc] initWithRenderBlock:^OSStatus(
+          BOOL * _Nonnull isSilence,
+          const AudioTimeStamp * _Nonnull timestamp,
+          AVAudioFrameCount frameCount,
+          AudioBufferList * _Nonnull audioBufferList) {
+
+      UInt32 actualChannels = audioBufferList->mNumberBuffers;
+
+      for (UInt32 channel = 0; channel < actualChannels; channel++) {
+          memset(audioBufferList->mBuffers[channel].mData, 0,
+                 audioBufferList->mBuffers[channel].mDataByteSize);
+      }
+
+      if (self.runtime == nullptr) {
+          return noErr;
+      }
+
+      // Try to acquire the lock without blocking. If applyInstructions
+      // is in progress on the JS thread, output silence for this block
+      // rather than risking heap corruption from concurrent access.
+      std::unique_lock<std::mutex> lock(self->_runtimeMutex, std::try_to_lock);
+      if (!lock.owns_lock()) {
+          return noErr;
+      }
+
+      for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
+          outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
+      }
+
+      self.runtime->process(
+          inputBuffer,
+          numOutputChannels,
+          outputBuffer,
+          numOutputChannels,
+          frameCount,
+          nullptr
+      );
+
+      return noErr;
+  }];
+
+  [self.audioEngine attachNode:sourceNode];
+  [self.audioEngine connect:sourceNode to:mixerNode format:outputFormat];
+
+  NSError *error = nil;
+  if (![self.audioEngine startAndReturnError:&error]) {
+    NSLog(@"Error starting audio engine: %@", error.localizedDescription);
+    return NO;
+  }
+
+  // Use granted IOBufferDuration — iOS may not honor the preferred value exactly.
+  int bufferSize = [self computeBufferSizeFromSession];
+  NSLog(@"[Elementary] Runtime block size: %d frames", bufferSize);
+  self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
+
+  [[NSNotificationCenter defaultCenter] addObserver:self
+                                           selector:@selector(handleAudioInterruption:)
+                                               name:AVAudioSessionInterruptionNotification
+                                             object:[AVAudioSession sharedInstance]];
+
+  [[NSNotificationCenter defaultCenter] addObserver:self
+                                           selector:@selector(handleEngineConfigChange:)
+                                               name:AVAudioEngineConfigurationChangeNotification
+                                             object:self.audioEngine];
+
+  // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
+  // These nodes queue events on the audio thread; processQueuedEvents drains
+  // them on the main thread and we forward to JS via RCTEventEmitter.
+  [self startEventPolling];
+
+  self.audioEngineInitialized = YES;
+  return YES;
 }
 
 - (void)startEventPolling {
@@ -161,18 +187,19 @@ RCT_EXPORT_MODULE();
   AVAudioSessionInterruptionType type = (AVAudioSessionInterruptionType)[info[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
 
   if (type == AVAudioSessionInterruptionTypeEnded) {
-    NSError *error;
-    [[AVAudioSession sharedInstance] setActive:YES error:&error];
-    if (error) {
-      NSLog(@"[Elementary] Failed to reactivate audio session: %@", error.localizedDescription);
+    NSError *activateError = nil;
+    if (![self setAudioSessionActive:YES error:&activateError]) {
+      NSLog(@"[Elementary] Failed to reactivate audio session: %@", activateError.localizedDescription);
       return;
     }
-    if (![self.audioEngine startAndReturnError:&error]) {
-      NSLog(@"[Elementary] Failed to restart engine after interruption: %@", error.localizedDescription);
+    NSError *engineError = nil;
+    if (![self.audioEngine startAndReturnError:&engineError]) {
+      NSLog(@"[Elementary] Failed to restart engine after interruption: %@", engineError.localizedDescription);
     } else {
       NSLog(@"[Elementary] Engine restarted after interruption");
     }
   } else {
+    self.audioSessionActive = NO;
     NSLog(@"[Elementary] Audio interrupted");
   }
 }
@@ -194,11 +221,27 @@ RCT_EXPORT_MODULE();
     Elementary *strongSelf = weakSelf;
     if (!strongSelf) return;
 
-    NSError *error;
+    NSError *error = nil;
+    strongSelf.audioSessionActive = NO;
+    if (![strongSelf setAudioSessionActive:YES error:&error]) {
+      NSLog(@"[Elementary] Failed to reactivate audio session after config change: %@", error.localizedDescription);
+      error = nil;
+    }
     if (![strongSelf.audioEngine startAndReturnError:&error]) {
       NSLog(@"[Elementary] Failed to restart engine after config change: %@", error.localizedDescription);
     } else {
       NSLog(@"[Elementary] Engine restarted after config change");
+
+      // Recreate runtime with updated sample rate and block size.
+      // After a route change (e.g. Bluetooth/AirPlay), the session's
+      // IOBufferDuration and sample rate may differ from what we used at init.
+      AVAudioFormat *newFormat = [strongSelf.audioEngine.outputNode outputFormatForBus:0];
+      int newBufferSize = [strongSelf computeBufferSizeFromSession];
+      NSLog(@"[Elementary] Recreating runtime: sampleRate=%.0f, blockSize=%d", newFormat.sampleRate, newBufferSize);
+      {
+        std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
+        strongSelf.runtime = std::make_shared<elem::Runtime<float>>(newFormat.sampleRate, newBufferSize);
+      }
     }
   });
 }
@@ -207,11 +250,215 @@ RCT_EXPORT_MODULE();
   return YES;
 }
 
+#pragma mark - Audio Session Configuration
+
+- (BOOL)desiredAudioSessionOptionsAreSet {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  return [session.category isEqualToString:self.desiredAudioSessionCategory] &&
+         [session.mode isEqualToString:self.desiredAudioSessionMode] &&
+         session.categoryOptions == self.desiredAudioSessionOptions;
+}
+
+- (BOOL)configureAudioSessionWithError:(NSError **)error {
+  if (!self.shouldManageAudioSession) {
+    return YES;
+  }
+
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  if (![self desiredAudioSessionOptionsAreSet]) {
+    NSError *categoryError = nil;
+    if (![session setCategory:self.desiredAudioSessionCategory
+                         mode:self.desiredAudioSessionMode
+                      options:self.desiredAudioSessionOptions
+                        error:&categoryError]) {
+      if (error) *error = categoryError;
+      return NO;
+    }
+  }
+
+  // Compute the preferred buffer duration from the actual session sample rate
+  // (after category is set) so the requested buffer equals the intended
+  // 512 frames regardless of device sample rate.
+  double preferredBufferDuration = 512.0 / session.sampleRate;
+  NSError *bufferError = nil;
+  if (![session setPreferredIOBufferDuration:preferredBufferDuration error:&bufferError]) {
+    if (error) *error = bufferError;
+    return NO;
+  }
+
+
+  NSLog(@"[Elementary] Configured audio session: category=%@, mode=%@, options=%lu, IOBufferDuration=%.4fs",
+        session.category, session.mode, (unsigned long)session.categoryOptions, session.IOBufferDuration);
+  return YES;
+}
+
+- (BOOL)setAudioSessionActive:(BOOL)active error:(NSError **)error {
+  if (!self.shouldManageAudioSession) {
+    return YES;
+  }
+
+  // Serialize audio session state changes on the main queue to avoid data
+  // races between interruption notifications, dispatch_after blocks, and
+  // JS-thread exported methods.
+  if ([NSThread isMainThread]) {
+    return [self setAudioSessionActiveOnMainThread:active error:error];
+  } else {
+    __block BOOL result = NO;
+    __block NSError *blockError = nil;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+      result = [self setAudioSessionActiveOnMainThread:active error:&blockError];
+    });
+    if (error && blockError) *error = blockError;
+    return result;
+  }
+}
+
+- (BOOL)setAudioSessionActiveOnMainThread:(BOOL)active error:(NSError **)error {
+  if (self.audioSessionActive == active) {
+    return YES;
+  }
+
+
+  if (active && ![self configureAudioSessionWithError:error]) {
+    return NO;
+  }
+
+  BOOL success = [[AVAudioSession sharedInstance] setActive:active error:error];
+  if (success) {
+    self.audioSessionActive = active;
+  }
+  return success;
+}
+
+- (AVAudioSessionCategory)audioSessionCategoryFromString:(NSString *)category {
+  if ([category isEqualToString:@"ambient"]) return AVAudioSessionCategoryAmbient;
+  if ([category isEqualToString:@"soloAmbient"]) return AVAudioSessionCategorySoloAmbient;
+  if ([category isEqualToString:@"record"]) return AVAudioSessionCategoryRecord;
+  if ([category isEqualToString:@"playAndRecord"]) return AVAudioSessionCategoryPlayAndRecord;
+  if ([category isEqualToString:@"multiRoute"]) return AVAudioSessionCategoryMultiRoute;
+  return AVAudioSessionCategoryPlayback;
+}
+
+- (AVAudioSessionMode)audioSessionModeFromString:(NSString *)mode {
+  if ([mode isEqualToString:@"voiceChat"]) return AVAudioSessionModeVoiceChat;
+  if ([mode isEqualToString:@"videoChat"]) return AVAudioSessionModeVideoChat;
+  if ([mode isEqualToString:@"gameChat"]) return AVAudioSessionModeGameChat;
+  if ([mode isEqualToString:@"measurement"]) return AVAudioSessionModeMeasurement;
+  if ([mode isEqualToString:@"moviePlayback"]) return AVAudioSessionModeMoviePlayback;
+  if ([mode isEqualToString:@"spokenAudio"]) return AVAudioSessionModeSpokenAudio;
+  if ([mode isEqualToString:@"voicePrompt"]) return AVAudioSessionModeVoicePrompt;
+  if ([mode isEqualToString:@"videoRecording"]) return AVAudioSessionModeVideoRecording;
+  return AVAudioSessionModeDefault;
+}
+
+- (AVAudioSessionCategoryOptions)audioSessionOptionsFromArray:(NSArray *)optionsArray {
+  AVAudioSessionCategoryOptions options = 0;
+  for (NSString *option in optionsArray) {
+    if ([option isEqualToString:@"mixWithOthers"]) {
+      options |= AVAudioSessionCategoryOptionMixWithOthers;
+    } else if ([option isEqualToString:@"duckOthers"]) {
+      options |= AVAudioSessionCategoryOptionDuckOthers;
+    } else if ([option isEqualToString:@"defaultToSpeaker"]) {
+      options |= AVAudioSessionCategoryOptionDefaultToSpeaker;
+    } else if ([option isEqualToString:@"allowBluetoothA2DP"]) {
+      options |= AVAudioSessionCategoryOptionAllowBluetoothA2DP;
+    } else if ([option isEqualToString:@"allowBluetoothHFP"]) {
+      // AVAudioSessionCategoryOptionAllowBluetoothHFP is only available from
+      // iOS 18 / Xcode 26+. The underlying value is 0x4 on all iOS versions.
+      options |= (AVAudioSessionCategoryOptions)0x4;
+    } else if ([option isEqualToString:@"allowAirPlay"]) {
+      options |= AVAudioSessionCategoryOptionAllowAirPlay;
+    } else if ([option isEqualToString:@"interruptSpokenAudioAndMixWithOthers"]) {
+      options |= AVAudioSessionCategoryOptionInterruptSpokenAudioAndMixWithOthers;
+    }
+  }
+  return options;
+}
+
+- (int)computeBufferSizeFromSession {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
+  int bufferSize = (int)round(outputFormat.sampleRate * session.IOBufferDuration);
+  if (bufferSize <= 0 || bufferSize > 4096) bufferSize = 512; // safety fallback
+  return bufferSize;
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)activateAudioSession:(RCTPromiseResolveBlock)resolve
+                      reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(activateAudioSession:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  NSError *error = nil;
+  if (![self setAudioSessionActive:YES error:&error]) {
+    reject(@"E_AUDIO_SESSION", @"Failed to activate audio session", error);
+    return;
+  }
+
+  resolve(@(YES));
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)deactivateAudioSession:(RCTPromiseResolveBlock)resolve
+                        reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(deactivateAudioSession:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  NSError *error = nil;
+  if (![self setAudioSessionActive:NO error:&error]) {
+    reject(@"E_AUDIO_SESSION", @"Failed to deactivate audio session", error);
+    return;
+  }
+
+  resolve(@(YES));
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)configureAudioSession:(NSString *)category
+                         mode:(NSString *)mode
+                      options:(NSArray *)options
+#else
+RCT_EXPORT_METHOD(configureAudioSession:(NSString *)category
+                  mode:(NSString *)mode
+                  options:(NSArray *)options)
+#endif
+{
+  self.shouldManageAudioSession = YES;
+  self.desiredAudioSessionCategory = [self audioSessionCategoryFromString:category];
+  self.desiredAudioSessionMode = [self audioSessionModeFromString:mode];
+  self.desiredAudioSessionOptions = [self audioSessionOptionsFromArray:options];
+
+  if (self.audioSessionActive) {
+    NSError *error = nil;
+    if (![self configureAudioSessionWithError:&error]) {
+      NSLog(@"[Elementary] Failed to update audio session options: %@", error.localizedDescription);
+    }
+  }
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)disableAudioSessionManagement
+#else
+RCT_EXPORT_METHOD(disableAudioSessionManagement)
+#endif
+{
+  self.shouldManageAudioSession = NO;
+}
+
 #pragma mark - Diagnostics
 
 RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
                       rejecter:(RCTPromiseRejectBlock)reject)
 {
+  if (![self initializeAudioEngineIfNeeded]) {
+    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
+    return;
+  }
+
   AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
   resolve(@{
     @"channels": @(format.channelCount),
@@ -229,6 +476,8 @@ RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
 RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 #endif
 {
+  if (![self initializeAudioEngineIfNeeded]) return;
+
   auto parsed = elem::js::parseJSON([message UTF8String]);
   if (parsed.isArray()) {
     std::lock_guard<std::mutex> lock(_runtimeMutex);
@@ -242,7 +491,7 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double)value)
 #endif
 {
-  if (self.runtime == nullptr) return;
+  if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) return;
 
   // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
   // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
@@ -270,6 +519,11 @@ RCT_EXPORT_METHOD(getSampleRate:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
+  if (![self initializeAudioEngineIfNeeded]) {
+    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
+    return;
+  }
+
   NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
   resolve(sampleRate);
 }
@@ -286,6 +540,11 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
                            rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
+  if (![self initializeAudioEngineIfNeeded]) {
+    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
+    return;
+  }
+
   dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
     if (self.runtime == nullptr) {
       reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
@@ -351,7 +610,7 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
                              rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  if (self.runtime == nullptr) {
+  if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) {
     reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
     return;
   }
