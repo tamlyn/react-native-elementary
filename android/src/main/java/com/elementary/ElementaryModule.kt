@@ -337,7 +337,6 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
           if (eventsJson.length > 2) { // Skip "[]"
             try {
               val arr = org.json.JSONArray(eventsJson)
-
               for (i in 0 until arr.length()) {
                 val obj = arr.getJSONObject(i)
                 val params = Arguments.createMap().apply {
