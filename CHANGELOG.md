@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1-beta.2
+
+### Features
+
+- **Event polling opt-in** — `startEventPolling()`, `stopEventPolling()`, `configureEventPolling(intervalMs)` to control runtime event polling (el.snapshot, el.meter, el.scope, el.fft). Polling is no longer started automatically, reducing JS thread overhead for apps that don't need events.
+
+### Bug Fixes
+
+- **Android new arch:** Add missing `startEventPolling`, `stopEventPolling`, `configureEventPolling` overrides in `ElementaryTurboModule.java` (fixes build failure)
+- **Lint:** Fix Prettier formatting for `configureAudioSession` params in `NativeElementary.ts`
+
 ## 0.4.1-beta.1
 
 ### Features
