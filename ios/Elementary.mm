@@ -120,10 +120,11 @@ RCT_EXPORT_MODULE();
                                                name:AVAudioEngineConfigurationChangeNotification
                                              object:self.audioEngine];
 
-  // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
-  // These nodes queue events on the audio thread; processQueuedEvents drains
-  // them on the main thread and we forward to JS via RCTEventEmitter.
-  [self startEventPolling];
+  // Event polling is NOT started automatically.
+  // Consumers that need el.snapshot / el.meter / el.scope events must
+  // explicitly call startEventPolling (or configureEventPolling +
+  // startEventPolling) to opt in. This avoids unnecessary JS thread
+  // overhead for apps that only use setProperty for real-time updates.
 
   self.audioEngineInitialized = YES;
   return YES;
@@ -132,13 +133,14 @@ RCT_EXPORT_MODULE();
 - (void)startEventPolling {
   if (self.eventPollTimer) return;
 
+  NSUInteger intervalMs = self.eventPollIntervalMs ?: 33; // Default ~30Hz
+
   dispatch_source_t timer = dispatch_source_create(
     DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
 
-  // ~30Hz (33ms interval) — enough for playhead UI, low overhead
   dispatch_source_set_timer(timer,
     dispatch_time(DISPATCH_TIME_NOW, 0),
-    33 * NSEC_PER_MSEC,
+    intervalMs * NSEC_PER_MSEC,
     5 * NSEC_PER_MSEC);
 
   __weak Elementary *weakSelf = self;
@@ -653,6 +655,55 @@ RCT_EXPORT_METHOD(getBundlePath:(RCTPromiseResolveBlock)resolve
 {
   NSString *bundlePath = [[NSBundle mainBundle] resourcePath];
   resolve(bundlePath);
+}
+
+#pragma mark - Event Polling Control
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)startEventPolling:(RCTPromiseResolveBlock)resolve
+                  reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(startEventPolling:(RCTPromiseResolveBlock)resolve
+                        rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  [self startEventPolling];
+  resolve(@YES);
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)stopEventPolling:(RCTPromiseResolveBlock)resolve
+                 reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(stopEventPolling:(RCTPromiseResolveBlock)resolve
+                       rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  if (self.eventPollTimer) {
+    dispatch_source_cancel(self.eventPollTimer);
+    self.eventPollTimer = nil;
+  }
+  resolve(@YES);
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)configureEventPolling:(double)intervalMs
+                      resolve:(RCTPromiseResolveBlock)resolve
+                       reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(configureEventPolling:(double)intervalMs
+                        resolve:(RCTPromiseResolveBlock)resolve
+                         rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  self.eventPollIntervalMs = (NSUInteger)fmax(10.0, fmin(1000.0, intervalMs));
+  // If already running, restart with new interval
+  if (self.eventPollTimer) {
+    dispatch_source_cancel(self.eventPollTimer);
+    self.eventPollTimer = nil;
+    [self startEventPolling];
+  }
+  resolve(@YES);
 }
 
 #pragma mark - RCTEventEmitter

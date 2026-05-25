@@ -125,6 +125,49 @@ export function getBundlePath(): Promise<string> {
 }
 
 /**
+ * Start polling for Elementary runtime events (el.snapshot, el.meter,
+ * el.scope, el.fft). Events are delivered via the 'elementaryEvent'
+ * NativeEventEmitter.
+ *
+ * Polling is NOT started automatically — you must call this if your
+ * app needs snapshot/meter/scope events. Apps that only use setProperty
+ * for real-time updates can skip polling entirely for zero bridge overhead.
+ *
+ * Each event payload is a plain object with at least a `type` field
+ * (e.g. "snapshot", "meter", "scope") plus event-specific keys such as
+ * `source`, `data`, etc.
+ *
+ * Call stopEventPolling() to halt polling and release native timer resources.
+ */
+export function startEventPolling(): Promise<boolean> {
+  return ElementaryModule.startEventPolling();
+}
+
+/**
+ * Stop polling for Elementary runtime events.
+ * Releases native timer resources (Android Handler / iOS dispatch_source_t).
+ * Call startEventPolling() to resume.
+ */
+export function stopEventPolling(): Promise<boolean> {
+  return ElementaryModule.stopEventPolling();
+}
+
+/**
+ * Configure the event polling interval in milliseconds.
+ * Must be called before startEventPolling, or polling will be restarted
+ * with the new interval.
+ *
+ * Typical values:
+ *   - 33ms (~30Hz): smooth metering and playhead updates
+ *   - 100ms (~10Hz): drift correction only, minimal JS thread overhead
+ *
+ * Values are clamped to 10-1000ms.
+ */
+export function configureEventPolling(intervalMs: number): Promise<boolean> {
+  return ElementaryModule.configureEventPolling(intervalMs);
+}
+
+/**
  * Update a property on a graph node without re-rendering the entire graph.
  * This operates directly on the audio thread — ideal for real-time MIDI
  * note triggering, parameter automation, and any time-critical updates.

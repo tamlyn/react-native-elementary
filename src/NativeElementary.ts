@@ -12,14 +12,6 @@ export type AudioResourceInfo = {
 
 export interface Spec extends TurboModule {
   getSampleRate(): Promise<number>;
-  activateAudioSession(): Promise<boolean>;
-  deactivateAudioSession(): Promise<boolean>;
-  configureAudioSession(
-    category: string,
-    mode: string,
-    options: string[]
-  ): void;
-  disableAudioSessionManagement(): void;
   applyInstructions(message: string): void;
 
   // Real-time property updates (no graph re-render, audio-thread safe)
@@ -36,6 +28,24 @@ export interface Spec extends TurboModule {
   // Path helpers
   getDocumentsDirectory(): Promise<string>;
   getBundlePath(): Promise<string>;
+
+  // Event polling control
+  // Start/stop polling for el.snapshot, el.meter, el.scope, el.fft events.
+  // Polling is NOT started automatically — consumers must opt in.
+  // Use configureEventPolling to change the poll interval before starting.
+  startEventPolling(): Promise<boolean>;
+  stopEventPolling(): Promise<boolean>;
+  configureEventPolling(intervalMs: number): Promise<boolean>;
+
+  // iOS audio session (no-ops on Android)
+  activateAudioSession(): Promise<boolean>;
+  deactivateAudioSession(): Promise<boolean>;
+  configureAudioSession(
+    category: string,
+    mode: string,
+    options: string[]
+  ): void;
+  disableAudioSessionManagement(): void;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('Elementary');

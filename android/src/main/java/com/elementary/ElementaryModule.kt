@@ -38,6 +38,7 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   private var hasAudioFocus = false
   private var eventPollHandler: Handler? = null
   private var eventPollRunnable: Runnable? = null
+  private var eventPollIntervalMs: Long = 33 // Default ~30Hz
   private var listenerCount: Int = 0
   private var hasEventListeners: Boolean = false
 
@@ -123,6 +124,53 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
       listenerCount = 0
       hasEventListeners = false
     }
+  }
+
+  /**
+   * Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
+   * Polling interval defaults to 33ms (~30Hz) — use configureEventPolling to change.
+   * Call stopEventPolling to halt polling and release native timer resources.
+   */
+  @ReactMethod
+  fun startEventPolling(promise: Promise) {
+    if (eventPollHandler != null) {
+      promise.resolve(true) // Already running
+      return
+    }
+    startEventPolling()
+    promise.resolve(true)
+  }
+
+  /**
+   * Stop polling for runtime events. Call startEventPolling to resume.
+   */
+  @ReactMethod
+  fun stopEventPolling(promise: Promise) {
+    stopEventPolling()
+    promise.resolve(true)
+  }
+
+  /**
+   * Configure the event polling interval in milliseconds.
+   * Must be called before startEventPolling, or polling will be restarted
+   * with the new interval.
+   *
+   * Typical values:
+   *   - 33ms (~30Hz): smooth metering and playhead updates
+   *   - 100ms (~10Hz): drift correction only, minimal JS thread overhead
+   *
+   * No-op if polling is not needed (consumers that don't use el.snapshot
+   * or el.meter can skip polling entirely by not calling startEventPolling).
+   */
+  @ReactMethod
+  fun configureEventPolling(intervalMs: Double, promise: Promise) {
+    eventPollIntervalMs = intervalMs.toLong().coerceIn(10, 1000)
+    // If already running, restart with new interval
+    if (eventPollHandler != null) {
+      stopEventPolling()
+      startEventPolling()
+    }
+    promise.resolve(true)
   }
 
   @ReactMethod
@@ -268,7 +316,7 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   }
 
   // Event polling: drain el.snapshot / el.meter / el.scope events from
-  // the Elementary C++ runtime and forward to JS at ~30Hz.
+  // the Elementary C++ runtime and forward to JS.
   // Mirrors the iOS dispatch_source_t timer in Elementary.mm.
   private fun startEventPolling() {
     if (eventPollHandler != null) return // Already running
@@ -280,7 +328,7 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
         if (!hasEventListeners) {
           // No JS listeners — skip polling to avoid unnecessary work.
           // Re-check next tick in case a listener is added.
-          eventPollHandler?.postDelayed(this, 33)
+          eventPollHandler?.postDelayed(this, eventPollIntervalMs)
           return
         }
         try {
@@ -315,11 +363,11 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
         } catch (e: Exception) {
           Log.d(TAG, "Event polling error: ${e.message}")
         }
-        eventPollHandler?.postDelayed(this, 33) // ~30Hz
+        eventPollHandler?.postDelayed(this, eventPollIntervalMs)
       }
     }
     eventPollHandler?.post(eventPollRunnable!!)
-    Log.d(TAG, "Event polling started at ~30Hz")
+    Log.d(TAG, "Event polling started at ~${1000.0 / eventPollIntervalMs}Hz (${eventPollIntervalMs}ms interval)")
   }
 
   private fun stopEventPolling() {
@@ -345,10 +393,15 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
 
     reactContext.addLifecycleEventListener(this)
 
-    // Start polling for runtime events (el.snapshot, el.meter, el.scope, el.fft).
-    // These nodes queue events on the audio thread; processQueuedEvents drains
-    // them on the main thread and we forward to JS via RCTDeviceEventEmitter.
-    startEventPolling()
+    // Event polling is NOT started automatically.
+    // Consumers that need el.snapshot / el.meter / el.scope events must
+    // explicitly call startEventPolling() (or configureEventPolling +
+    // startEventPolling) to opt in. This avoids unnecessary JS thread
+    // overhead for apps that only use setProperty for real-time updates
+    // and don't need periodic snapshot/meter/scope data.
+    //
+    // For backward compat, call startEventPolling() on mount if your
+    // app uses Elementary event listeners.
 
     Log.d(TAG, "Audio engine initialized (channels=${nativeGetNumChannels()}, sampleRate=${nativeGetSampleRate()})")
   }
