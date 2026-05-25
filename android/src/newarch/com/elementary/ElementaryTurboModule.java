@@ -77,4 +77,19 @@ public class ElementaryTurboModule extends NativeElementarySpec {
     public void setProperty(double nodeHash, String key, double value) {
         module.setProperty(nodeHash, key, value);
     }
+
+    @Override
+    public void startEventPolling(Promise promise) {
+        module.startEventPolling(promise);
+    }
+
+    @Override
+    public void stopEventPolling(Promise promise) {
+        module.stopEventPolling(promise);
+    }
+
+    @Override
+    public void configureEventPolling(double intervalMs, Promise promise) {
+        module.configureEventPolling(intervalMs, promise);
+    }
 }

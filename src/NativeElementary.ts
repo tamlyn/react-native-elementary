@@ -40,7 +40,11 @@ export interface Spec extends TurboModule {
   // iOS audio session (no-ops on Android)
   activateAudioSession(): Promise<boolean>;
   deactivateAudioSession(): Promise<boolean>;
-  configureAudioSession(category: string, mode: string, options: string[]): void;
+  configureAudioSession(
+    category: string,
+    mode: string,
+    options: string[]
+  ): void;
   disableAudioSessionManagement(): void;
 }
 
