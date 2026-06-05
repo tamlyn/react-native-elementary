@@ -456,17 +456,21 @@ RCT_EXPORT_METHOD(disableAudioSessionManagement)
 RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
                       rejecter:(RCTPromiseRejectBlock)reject)
 {
-  if (![self initializeAudioEngineIfNeeded]) {
-    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-    return;
-  }
+  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
+  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded]) {
+      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
+      return;
+    }
 
-  AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
-  resolve(@{
-    @"channels": @(format.channelCount),
-    @"sampleRate": @(format.sampleRate),
-    @"engineRunning": @(self.audioEngine.isRunning),
-    @"runtimeReady": @(self.runtime != nullptr),
+    AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
+    resolve(@{
+      @"channels": @(format.channelCount),
+      @"sampleRate": @(format.sampleRate),
+      @"engineRunning": @(self.audioEngine.isRunning),
+      @"runtimeReady": @(self.runtime != nullptr),
+    });
   });
 }
 
@@ -521,13 +525,17 @@ RCT_EXPORT_METHOD(getSampleRate:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded]) {
-    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-    return;
-  }
+  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
+  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded]) {
+      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
+      return;
+    }
 
-  NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
-  resolve(sampleRate);
+    NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
+    resolve(sampleRate);
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -542,63 +550,68 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
                            rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded]) {
-    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-    return;
-  }
-
-  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-    if (self.runtime == nullptr) {
-      reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
+  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
+  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+  // Perform engine initialization on main thread before dispatching heavy work.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded]) {
+      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
       return;
     }
 
-    std::string keyStr = [key UTF8String];
-    std::string filePathStr = [filePath UTF8String];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      if (self.runtime == nullptr) {
+        reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
+        return;
+      }
 
-    elementary::AudioLoadResult result = elementary::AudioResourceLoader::loadFile(keyStr, filePathStr);
+      std::string keyStr = [key UTF8String];
+      std::string filePathStr = [filePath UTF8String];
 
-    if (!result.success) {
-      reject(@"E_LOAD_FAILED", [NSString stringWithUTF8String:result.error.c_str()], nil);
-      return;
-    }
+      elementary::AudioLoadResult result = elementary::AudioResourceLoader::loadFile(keyStr, filePathStr);
 
-    size_t numChannels = result.info.channels;
-    size_t numSamples = result.info.sampleCount;
-    std::vector<float*> channelPtrs(numChannels);
-    for (size_t ch = 0; ch < numChannels; ++ch) {
-      channelPtrs[ch] = result.data.data() + (ch * numSamples);
-    }
+      if (!result.success) {
+        reject(@"E_LOAD_FAILED", [NSString stringWithUTF8String:result.error.c_str()], nil);
+        return;
+      }
 
-    auto resource = std::make_unique<elem::AudioBufferResource>(
-      channelPtrs.data(),
-      numChannels,
-      numSamples
-    );
-    bool added;
-    {
-      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
-      added = self.runtime->addSharedResource(keyStr, std::move(resource));
-    }
+      size_t numChannels = result.info.channels;
+      size_t numSamples = result.info.sampleCount;
+      std::vector<float*> channelPtrs(numChannels);
+      for (size_t ch = 0; ch < numChannels; ++ch) {
+        channelPtrs[ch] = result.data.data() + (ch * numSamples);
+      }
 
-    if (!added) {
-      reject(@"E_KEY_EXISTS", [NSString stringWithFormat:@"Resource with key '%@' already exists", key], nil);
-      return;
-    }
+      auto resource = std::make_unique<elem::AudioBufferResource>(
+        channelPtrs.data(),
+        numChannels,
+        numSamples
+      );
+      bool added;
+      {
+        std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+        added = self.runtime->addSharedResource(keyStr, std::move(resource));
+      }
 
-    @synchronized(self.loadedResources) {
-      [self.loadedResources addObject:key];
-    }
+      if (!added) {
+        reject(@"E_KEY_EXISTS", [NSString stringWithFormat:@"Resource with key '%@' already exists", key], nil);
+        return;
+      }
 
-    NSDictionary *info = @{
-      @"key": key,
-      @"channels": @(result.info.channels),
-      @"sampleCount": @(result.info.sampleCount),
-      @"sampleRate": @(result.info.sampleRate),
-      @"durationMs": @(result.info.durationMs)
-    };
+      @synchronized(self.loadedResources) {
+        [self.loadedResources addObject:key];
+      }
 
-    resolve(info);
+      NSDictionary *info = @{
+        @"key": key,
+        @"channels": @(result.info.channels),
+        @"sampleCount": @(result.info.sampleCount),
+        @"sampleRate": @(result.info.sampleRate),
+        @"durationMs": @(result.info.durationMs)
+      };
+
+      resolve(info);
+    });
   });
 }
 
@@ -612,24 +625,28 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
                              rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) {
-    reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
-    return;
-  }
-
-  BOOL found = NO;
-  @synchronized(self.loadedResources) {
-    if ([self.loadedResources containsObject:key]) {
-      [self.loadedResources removeObject:key];
-      found = YES;
+  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
+  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) {
+      reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
+      return;
     }
-  }
 
-  if (found) {
-    self.runtime->pruneSharedResources();
-  }
+    BOOL found = NO;
+    @synchronized(self.loadedResources) {
+      if ([self.loadedResources containsObject:key]) {
+        [self.loadedResources removeObject:key];
+        found = YES;
+      }
+    }
 
-  resolve(@(found));
+    if (found) {
+      self.runtime->pruneSharedResources();
+    }
+
+    resolve(@(found));
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
