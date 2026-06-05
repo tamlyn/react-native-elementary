@@ -7,6 +7,24 @@ static Elementary *_sharedInstance = nil;
 
 @implementation Elementary
 
+// Main-thread dispatch policy:
+//
+// AVAudioEngine.outputNode must be accessed on the main thread to avoid
+// an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+//
+// Dispatch style per context:
+//   dispatch_async(main)  — Promise-based RCT_EXPORT_METHOD methods that
+//                           resolve/reject asynchronously.
+//   dispatch_sync(main)   — setAudioSessionActive needs a synchronous result
+//                           for callers that branch on the return value.
+//   dispatch_after(main)  — handleEngineConfigChange defers to avoid
+//                           re-entrant deadlock during route changes.
+//
+// Self-capture policy:
+//   One-shot dispatch_async blocks may capture self strongly (no retain cycle).
+//   Long-lived or deferred blocks (timers, dispatch_after) must use the
+//   __weak/strongSelf pattern to avoid extending module lifetime.
+
 RCT_EXPORT_MODULE();
 
 + (instancetype)sharedInstance {
@@ -28,6 +46,26 @@ RCT_EXPORT_MODULE();
     self.audioEngineInitialized = NO;
   }
   return self;
+}
+
+/**
+ * Dispatch @c block to the main queue after verifying the audio engine
+ * is initialized. If initialization fails, @c reject is called with
+ * @c E_AUDIO_ENGINE and the block is not executed.
+ *
+ * All RCT_EXPORT_METHOD entry points that access AVAudioEngine must use
+ * this (or the fast-path check in applyInstructions / setProperty) to
+ * avoid AURemoteIO::Cleanup RPC timeouts.
+ */
+- (void)dispatchMainWithEngineInit:(void (^)(void))block
+                            reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded]) {
+      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
+      return;
+    }
+    block();
+  });
 }
 
 - (BOOL)initializeAudioEngineIfNeeded {
@@ -462,14 +500,7 @@ RCT_EXPORT_METHOD(disableAudioSessionManagement)
 RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
                       rejecter:(RCTPromiseRejectBlock)reject)
 {
-  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
-  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
-  dispatch_async(dispatch_get_main_queue(), ^{
-    if (![self initializeAudioEngineIfNeeded]) {
-      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-      return;
-    }
-
+  [self dispatchMainWithEngineInit:^{
     AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
     resolve(@{
       @"channels": @(format.channelCount),
@@ -477,7 +508,7 @@ RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
       @"engineRunning": @(self.audioEngine.isRunning),
       @"runtimeReady": @(self.runtime != nullptr),
     });
-  });
+  } reject:reject];
 }
 
 #pragma mark - React Native Methods
@@ -567,17 +598,10 @@ RCT_EXPORT_METHOD(getSampleRate:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
-  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
-  dispatch_async(dispatch_get_main_queue(), ^{
-    if (![self initializeAudioEngineIfNeeded]) {
-      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-      return;
-    }
-
+  [self dispatchMainWithEngineInit:^{
     NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
     resolve(sampleRate);
-  });
+  } reject:reject];
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -592,15 +616,7 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
                            rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
-  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
-  // Perform engine initialization on main thread before dispatching heavy work.
-  dispatch_async(dispatch_get_main_queue(), ^{
-    if (![self initializeAudioEngineIfNeeded]) {
-      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-      return;
-    }
-
+  [self dispatchMainWithEngineInit:^{
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
       if (self.runtime == nullptr) {
         reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
@@ -654,7 +670,7 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
 
       resolve(info);
     });
-  });
+  } reject:reject];
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
