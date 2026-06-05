@@ -625,13 +625,17 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
                              rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
+  // unloadAudioResource does not require the audio engine to be running.
+  // If the engine was never initialized, there are no resources to unload —
+  // resolve immediately with NO without touching AVAudioEngine.
+  if (!self.audioEngineInitialized || self.runtime == nullptr) {
+    resolve(@(NO));
+    return;
+  }
+
   // AVAudioEngine.outputNode must be accessed on the main thread to avoid
   // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
   dispatch_async(dispatch_get_main_queue(), ^{
-    if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) {
-      reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
-      return;
-    }
 
     BOOL found = NO;
     @synchronized(self.loadedResources) {
