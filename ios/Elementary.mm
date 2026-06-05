@@ -642,7 +642,10 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
     }
 
     if (found) {
-      self.runtime->pruneSharedResources();
+      {
+        std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+        self.runtime->pruneSharedResources();
+      }
     }
 
     resolve(@(found));
