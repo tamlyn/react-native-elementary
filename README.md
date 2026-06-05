@@ -2,9 +2,36 @@
 
 > Use [Elementary Audio][elem] in your React Native app
 
-This is alpha quality software.
+[![Alpha](https://img.shields.io/badge/status-alpha-orange)](https://github.com/tamlyn/react-native-elementary/releases)
 
 [elem]: https://elementary.audio
+
+## Project status
+
+Alpha. The API is subject to change.
+
+### Supported platforms
+
+- iOS
+- Android
+
+### Supported features
+
+- Native Elementary Audio renderer via `useRenderer` hook
+- Real-time `setProperty` for graph parameter updates
+- iOS audio session configuration and management
+- Configurable event polling (`el.snapshot`, `el.meter`, `el.scope`, `el.fft`)
+- Audio resource loading via VFS
+
+### Known issues
+
+- Native node types (`el.metro`, `el.time`, `el.fft`, `el.convolve`) are not yet
+  supported (see [#4][i4])
+- Audio I/O may not update automatically when device connection changes
+  (see [#15][i15])
+
+[i4]: https://github.com/tamlyn/react-native-elementary/issues/4
+[i15]: https://github.com/tamlyn/react-native-elementary/issues/15
 
 ## Installation
 
