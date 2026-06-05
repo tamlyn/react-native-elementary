@@ -35,6 +35,12 @@ RCT_EXPORT_MODULE();
     return YES;
   }
 
+  // AVAudioEngine must be accessed on the main thread to avoid
+  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+  // All cold-engine callers dispatch to main before calling this method.
+  NSAssert([NSThread isMainThread],
+           @"initializeAudioEngineIfNeeded must be called from the main thread");
+
   // Configure and activate the audio session before creating AVAudioEngine.
   NSError *sessionError = nil;
   [self setAudioSessionActive:YES error:&sessionError];
@@ -482,13 +488,27 @@ RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
 RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded]) return;
-
-  auto parsed = elem::js::parseJSON([message UTF8String]);
-  if (parsed.isArray()) {
-    std::lock_guard<std::mutex> lock(_runtimeMutex);
-    self.runtime->applyInstructions(parsed.getArray());
+  // Fast path: engine already initialized — process synchronously.
+  if (self.audioEngineInitialized) {
+    auto parsed = elem::js::parseJSON([message UTF8String]);
+    if (parsed.isArray()) {
+      std::lock_guard<std::mutex> lock(_runtimeMutex);
+      self.runtime->applyInstructions(parsed.getArray());
+    }
+    return;
   }
+
+  // Cold path: engine not yet initialized. Dispatch to main thread to
+  // avoid AURemoteIO::Cleanup RPC timeout when accessing AVAudioEngine.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded]) return;
+
+    auto parsed = elem::js::parseJSON([message UTF8String]);
+    if (parsed.isArray()) {
+      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+      self.runtime->applyInstructions(parsed.getArray());
+    }
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -497,24 +517,46 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double)value)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) return;
+  // Fast path: engine already initialized — update synchronously.
+  if (self.audioEngineInitialized && self.runtime != nullptr) {
+    elem::js::Array instruction;
+    instruction.push_back((double)3);
+    instruction.push_back(nodeHash);
+    instruction.push_back(std::string([key UTF8String]));
+    instruction.push_back(value);
 
-  // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
-  // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
-  // The SET_PROPERTY opcode (3) comes from Elementary's Runtime.h.
-  elem::js::Array instruction;
-  instruction.push_back((double)3);
-  instruction.push_back(nodeHash);
-  instruction.push_back(std::string([key UTF8String]));
-  instruction.push_back(value);
+    elem::js::Array batch;
+    batch.push_back(instruction);
 
-  elem::js::Array batch;
-  batch.push_back(instruction);
-
-  {
-    std::lock_guard<std::mutex> lock(_runtimeMutex);
-    self.runtime->applyInstructions(batch);
+    {
+      std::lock_guard<std::mutex> lock(_runtimeMutex);
+      self.runtime->applyInstructions(batch);
+    }
+    return;
   }
+
+  // Cold path: engine not yet initialized. Dispatch to main thread to
+  // avoid AURemoteIO::Cleanup RPC timeout when accessing AVAudioEngine.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) return;
+
+    // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
+    // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
+    // The SET_PROPERTY opcode (3) comes from Elementary's Runtime.h.
+    elem::js::Array instruction;
+    instruction.push_back((double)3);
+    instruction.push_back(nodeHash);
+    instruction.push_back(std::string([key UTF8String]));
+    instruction.push_back(value);
+
+    elem::js::Array batch;
+    batch.push_back(instruction);
+
+    {
+      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+      self.runtime->applyInstructions(batch);
+    }
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
