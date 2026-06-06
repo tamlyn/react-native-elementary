@@ -1,4 +1,4 @@
-import { NativeModules, NativeEventEmitter } from 'react-native';
+import { NativeModules } from 'react-native';
 
 // Mock the native module before importing our module
 const mockElementary = {
@@ -110,9 +110,6 @@ describe('react-native-elementary', () => {
 
   describe('applyInstructions', () => {
     it('calls native applyInstructions', () => {
-      const { useRenderer } = require('../index');
-      // Note: useRenderer creates a NativeRenderer that calls applyInstructions
-      // For unit testing, just verify the native method exists
       expect(mockElementary.applyInstructions).toBeDefined();
     });
   });
@@ -121,7 +118,11 @@ describe('react-native-elementary', () => {
     it('calls native setProperty', () => {
       const { setProperty } = require('../index');
       setProperty(12345, 'value', 0.5);
-      expect(mockElementary.setProperty).toHaveBeenCalledWith(12345, 'value', 0.5);
+      expect(mockElementary.setProperty).toHaveBeenCalledWith(
+        12345,
+        'value',
+        0.5
+      );
     });
   });
 
@@ -182,9 +183,8 @@ describe('react-native-elementary', () => {
 
   describe('useRenderer', () => {
     it('returns a core renderer (stable ref)', () => {
-      const { useRenderer } = require('../index');
-      // Note: useRenderer is a hook; we just verify it's a function
-      expect(typeof useRenderer).toBe('function');
+      const mod = require('../index');
+      expect(typeof mod.useRenderer).toBe('function');
     });
   });
 });
