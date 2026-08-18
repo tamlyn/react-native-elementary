@@ -7,6 +7,24 @@ static Elementary *_sharedInstance = nil;
 
 @implementation Elementary
 
+// Main-thread dispatch policy:
+//
+// AVAudioEngine.outputNode must be accessed on the main thread to avoid
+// an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+//
+// Dispatch style per context:
+//   dispatch_async(main)  — Promise-based RCT_EXPORT_METHOD methods that
+//                           resolve/reject asynchronously.
+//   dispatch_sync(main)   — setAudioSessionActive needs a synchronous result
+//                           for callers that branch on the return value.
+//   dispatch_after(main)  — handleEngineConfigChange defers to avoid
+//                           re-entrant deadlock during route changes.
+//
+// Self-capture policy:
+//   One-shot dispatch_async blocks may capture self strongly (no retain cycle).
+//   Long-lived or deferred blocks (timers, dispatch_after) must use the
+//   __weak/strongSelf pattern to avoid extending module lifetime.
+
 RCT_EXPORT_MODULE();
 
 + (instancetype)sharedInstance {
@@ -30,10 +48,36 @@ RCT_EXPORT_MODULE();
   return self;
 }
 
+/**
+ * Dispatch @c block to the main queue after verifying the audio engine
+ * is initialized. If initialization fails, @c reject is called with
+ * @c E_AUDIO_ENGINE and the block is not executed.
+ *
+ * All RCT_EXPORT_METHOD entry points that access AVAudioEngine must use
+ * this (or the fast-path check in applyInstructions / setProperty) to
+ * avoid AURemoteIO::Cleanup RPC timeouts.
+ */
+- (void)dispatchMainWithEngineInit:(void (^)(void))block
+                            reject:(RCTPromiseRejectBlock)reject {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded]) {
+      reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
+      return;
+    }
+    block();
+  });
+}
+
 - (BOOL)initializeAudioEngineIfNeeded {
   if (self.audioEngineInitialized) {
     return YES;
   }
+
+  // AVAudioEngine must be accessed on the main thread to avoid
+  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+  // All cold-engine callers dispatch to main before calling this method.
+  NSAssert([NSThread isMainThread],
+           @"initializeAudioEngineIfNeeded must be called from the main thread");
 
   // Configure and activate the audio session before creating AVAudioEngine.
   NSError *sessionError = nil;
@@ -456,18 +500,15 @@ RCT_EXPORT_METHOD(disableAudioSessionManagement)
 RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
                       rejecter:(RCTPromiseRejectBlock)reject)
 {
-  if (![self initializeAudioEngineIfNeeded]) {
-    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-    return;
-  }
-
-  AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
-  resolve(@{
-    @"channels": @(format.channelCount),
-    @"sampleRate": @(format.sampleRate),
-    @"engineRunning": @(self.audioEngine.isRunning),
-    @"runtimeReady": @(self.runtime != nullptr),
-  });
+  [self dispatchMainWithEngineInit:^{
+    AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
+    resolve(@{
+      @"channels": @(format.channelCount),
+      @"sampleRate": @(format.sampleRate),
+      @"engineRunning": @(self.audioEngine.isRunning),
+      @"runtimeReady": @(self.runtime != nullptr),
+    });
+  } reject:reject];
 }
 
 #pragma mark - React Native Methods
@@ -478,13 +519,27 @@ RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
 RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded]) return;
-
-  auto parsed = elem::js::parseJSON([message UTF8String]);
-  if (parsed.isArray()) {
-    std::lock_guard<std::mutex> lock(_runtimeMutex);
-    self.runtime->applyInstructions(parsed.getArray());
+  // Fast path: engine already initialized — process synchronously.
+  if (self.audioEngineInitialized) {
+    auto parsed = elem::js::parseJSON([message UTF8String]);
+    if (parsed.isArray()) {
+      std::lock_guard<std::mutex> lock(_runtimeMutex);
+      self.runtime->applyInstructions(parsed.getArray());
+    }
+    return;
   }
+
+  // Cold path: engine not yet initialized. Dispatch to main thread to
+  // avoid AURemoteIO::Cleanup RPC timeout when accessing AVAudioEngine.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded]) return;
+
+    auto parsed = elem::js::parseJSON([message UTF8String]);
+    if (parsed.isArray()) {
+      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+      self.runtime->applyInstructions(parsed.getArray());
+    }
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -493,24 +548,46 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
 RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double)value)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) return;
+  // Fast path: engine already initialized — update synchronously.
+  if (self.audioEngineInitialized && self.runtime != nullptr) {
+    elem::js::Array instruction;
+    instruction.push_back((double)3);
+    instruction.push_back(nodeHash);
+    instruction.push_back(std::string([key UTF8String]));
+    instruction.push_back(value);
 
-  // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
-  // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
-  // The SET_PROPERTY opcode (3) comes from Elementary's Runtime.h.
-  elem::js::Array instruction;
-  instruction.push_back((double)3);
-  instruction.push_back(nodeHash);
-  instruction.push_back(std::string([key UTF8String]));
-  instruction.push_back(value);
+    elem::js::Array batch;
+    batch.push_back(instruction);
 
-  elem::js::Array batch;
-  batch.push_back(instruction);
-
-  {
-    std::lock_guard<std::mutex> lock(_runtimeMutex);
-    self.runtime->applyInstructions(batch);
+    {
+      std::lock_guard<std::mutex> lock(_runtimeMutex);
+      self.runtime->applyInstructions(batch);
+    }
+    return;
   }
+
+  // Cold path: engine not yet initialized. Dispatch to main thread to
+  // avoid AURemoteIO::Cleanup RPC timeout when accessing AVAudioEngine.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) return;
+
+    // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
+    // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
+    // The SET_PROPERTY opcode (3) comes from Elementary's Runtime.h.
+    elem::js::Array instruction;
+    instruction.push_back((double)3);
+    instruction.push_back(nodeHash);
+    instruction.push_back(std::string([key UTF8String]));
+    instruction.push_back(value);
+
+    elem::js::Array batch;
+    batch.push_back(instruction);
+
+    {
+      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+      self.runtime->applyInstructions(batch);
+    }
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -521,13 +598,10 @@ RCT_EXPORT_METHOD(getSampleRate:(RCTPromiseResolveBlock)resolve
                   rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded]) {
-    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-    return;
-  }
-
-  NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
-  resolve(sampleRate);
+  [self dispatchMainWithEngineInit:^{
+    NSNumber *sampleRate = @([self.audioEngine.outputNode outputFormatForBus:0].sampleRate);
+    resolve(sampleRate);
+  } reject:reject];
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -542,64 +616,61 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
                            rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded]) {
-    reject(@"E_AUDIO_ENGINE", @"Failed to initialize audio engine", nil);
-    return;
-  }
+  [self dispatchMainWithEngineInit:^{
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+      if (self.runtime == nullptr) {
+        reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
+        return;
+      }
 
-  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-    if (self.runtime == nullptr) {
-      reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
-      return;
-    }
+      std::string keyStr = [key UTF8String];
+      std::string filePathStr = [filePath UTF8String];
 
-    std::string keyStr = [key UTF8String];
-    std::string filePathStr = [filePath UTF8String];
+      elementary::AudioLoadResult result = elementary::AudioResourceLoader::loadFile(keyStr, filePathStr);
 
-    elementary::AudioLoadResult result = elementary::AudioResourceLoader::loadFile(keyStr, filePathStr);
+      if (!result.success) {
+        reject(@"E_LOAD_FAILED", [NSString stringWithUTF8String:result.error.c_str()], nil);
+        return;
+      }
 
-    if (!result.success) {
-      reject(@"E_LOAD_FAILED", [NSString stringWithUTF8String:result.error.c_str()], nil);
-      return;
-    }
+      size_t numChannels = result.info.channels;
+      size_t numSamples = result.info.sampleCount;
+      std::vector<float*> channelPtrs(numChannels);
+      for (size_t ch = 0; ch < numChannels; ++ch) {
+        channelPtrs[ch] = result.data.data() + (ch * numSamples);
+      }
 
-    size_t numChannels = result.info.channels;
-    size_t numSamples = result.info.sampleCount;
-    std::vector<float*> channelPtrs(numChannels);
-    for (size_t ch = 0; ch < numChannels; ++ch) {
-      channelPtrs[ch] = result.data.data() + (ch * numSamples);
-    }
+      auto resource = std::make_unique<elem::AudioBufferResource>(
+        channelPtrs.data(),
+        numChannels,
+        numSamples
+      );
+      bool added;
+      {
+        std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+        added = self.runtime->addSharedResource(keyStr, std::move(resource));
+      }
 
-    auto resource = std::make_unique<elem::AudioBufferResource>(
-      channelPtrs.data(),
-      numChannels,
-      numSamples
-    );
-    bool added;
-    {
-      std::lock_guard<std::mutex> lock(self->_runtimeMutex);
-      added = self.runtime->addSharedResource(keyStr, std::move(resource));
-    }
+      if (!added) {
+        reject(@"E_KEY_EXISTS", [NSString stringWithFormat:@"Resource with key '%@' already exists", key], nil);
+        return;
+      }
 
-    if (!added) {
-      reject(@"E_KEY_EXISTS", [NSString stringWithFormat:@"Resource with key '%@' already exists", key], nil);
-      return;
-    }
+      @synchronized(self.loadedResources) {
+        [self.loadedResources addObject:key];
+      }
 
-    @synchronized(self.loadedResources) {
-      [self.loadedResources addObject:key];
-    }
+      NSDictionary *info = @{
+        @"key": key,
+        @"channels": @(result.info.channels),
+        @"sampleCount": @(result.info.sampleCount),
+        @"sampleRate": @(result.info.sampleRate),
+        @"durationMs": @(result.info.durationMs)
+      };
 
-    NSDictionary *info = @{
-      @"key": key,
-      @"channels": @(result.info.channels),
-      @"sampleCount": @(result.info.sampleCount),
-      @"sampleRate": @(result.info.sampleRate),
-      @"durationMs": @(result.info.durationMs)
-    };
-
-    resolve(info);
-  });
+      resolve(info);
+    });
+  } reject:reject];
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -612,24 +683,35 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
                              rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
-  if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) {
-    reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
+  // unloadAudioResource does not require the audio engine to be running.
+  // If the engine was never initialized, there are no resources to unload —
+  // resolve immediately with NO without touching AVAudioEngine.
+  if (!self.audioEngineInitialized || self.runtime == nullptr) {
+    resolve(@(NO));
     return;
   }
 
-  BOOL found = NO;
-  @synchronized(self.loadedResources) {
-    if ([self.loadedResources containsObject:key]) {
-      [self.loadedResources removeObject:key];
-      found = YES;
+  // AVAudioEngine.outputNode must be accessed on the main thread to avoid
+  // an RPC timeout in AURemoteIO::Cleanup when called from a background queue.
+  dispatch_async(dispatch_get_main_queue(), ^{
+
+    BOOL found = NO;
+    @synchronized(self.loadedResources) {
+      if ([self.loadedResources containsObject:key]) {
+        [self.loadedResources removeObject:key];
+        found = YES;
+      }
     }
-  }
 
-  if (found) {
-    self.runtime->pruneSharedResources();
-  }
+    if (found) {
+      {
+        std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+        self.runtime->pruneSharedResources();
+      }
+    }
 
-  resolve(@(found));
+    resolve(@(found));
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
