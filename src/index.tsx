@@ -200,7 +200,7 @@ export class NativeRenderer extends Renderer {
 }
 
 export function useRenderer(): { core: Renderer } {
-  const ref = useRef<NativeRenderer>();
+  const ref = useRef<NativeRenderer | null>(null);
 
   if (!ref.current) {
     ref.current = new NativeRenderer();
