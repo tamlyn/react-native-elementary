@@ -11,6 +11,9 @@ add_library(react-native-elementary SHARED
             cpp-adapter.cpp
 )
 
+set_target_properties(react-native-elementary PROPERTIES
+  LINK_FLAGS "-Wl,-z,max-page-size=16384")
+
 include_directories(
             ../cpp
             ../cpp/vendor/elementary/runtime
