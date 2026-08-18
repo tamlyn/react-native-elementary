@@ -12,23 +12,23 @@
   },
   "dependencies": {
     "@elemaudio/core": "^4.0.3",
-    "react": "19.0.0",
-    "react-native": "0.78.0",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
     "react-native-fs": "^2.20.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@babel/preset-env": "^7.25.3",
     "@babel/runtime": "^7.25.0",
-    "@react-native-community/cli": "15.0.1",
-    "@react-native-community/cli-platform-android": "15.0.1",
-    "@react-native-community/cli-platform-ios": "15.0.1",
-    "@react-native/babel-preset": "0.78.0",
-    "@react-native/metro-config": "0.78.0",
-    "@react-native/typescript-config": "0.78.0",
+    "@react-native-community/cli": "20.1.0",
+    "@react-native-community/cli-platform-android": "20.1.0",
+    "@react-native-community/cli-platform-ios": "20.1.0",
+    "@react-native/babel-preset": "0.85.3",
+    "@react-native/metro-config": "0.85.3",
+    "@react-native/typescript-config": "0.85.3",
     "react-native-builder-bob": "^0.37.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19.4"
   }
 }
