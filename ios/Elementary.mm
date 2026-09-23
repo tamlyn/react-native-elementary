@@ -7,6 +7,11 @@ static Elementary *_sharedInstance = nil;
 
 @implementation Elementary
 
+// The Runtime sizes every internal render buffer to its blockSize, so blockSize
+// must be >= any frameCount the render callback can be handed. Recorded here so
+// the render block can assert that invariant cheaply.
+static int gRuntimeBlockSize = 0;
+
 // Main-thread dispatch policy:
 //
 // AVAudioEngine.outputNode must be accessed on the main thread to avoid
@@ -124,6 +129,17 @@ RCT_EXPORT_MODULE();
           return noErr;
       }
 
+      // Invariant: the Runtime's buffers are sized to gRuntimeBlockSize. If a
+      // larger block ever arrives, output silence rather than overrunning them.
+      if (gRuntimeBlockSize > 0 && (int)frameCount > gRuntimeBlockSize) {
+          static dispatch_once_t onceToken;
+          dispatch_once(&onceToken, ^{
+              NSLog(@"[Elementary] frameCount %u exceeds Runtime block size %d; outputting silence",
+                    (unsigned)frameCount, gRuntimeBlockSize);
+          });
+          return noErr;
+      }
+
       for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
           outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
       }
@@ -149,9 +165,16 @@ RCT_EXPORT_MODULE();
     return NO;
   }
 
-  // Use granted IOBufferDuration — iOS may not honor the preferred value exactly.
-  int bufferSize = [self computeBufferSizeFromSession];
-  NSLog(@"[Elementary] Runtime block size: %d frames", bufferSize);
+  // Size the Runtime for the LARGEST block CoreAudio may request, not the
+  // IOBufferDuration estimate. IOBufferDuration is only a hint: AVAudioSourceNode
+  // delivers power-of-two blocks (e.g. 512) that routinely exceed
+  // round(sampleRate * IOBufferDuration) (e.g. 470). Elementary sizes every
+  // internal buffer to blockSize, so rendering more frames than that overruns the
+  // render-sequence buffer pool and corrupts its allocator metadata.
+  int bufferSize = [self computeRuntimeBlockSizeForNode:sourceNode];
+  gRuntimeBlockSize = bufferSize;
+  NSLog(@"[Elementary] Runtime block size: %d frames (session estimate %d)",
+        bufferSize, [self computeBufferSizeFromSession]);
   self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
 
   [[NSNotificationCenter defaultCenter] addObserver:self
@@ -190,31 +213,51 @@ RCT_EXPORT_MODULE();
   __weak Elementary *weakSelf = self;
   dispatch_source_set_event_handler(timer, ^{
     Elementary *strongSelf = weakSelf;
-    if (!strongSelf || strongSelf.runtime == nullptr) return;
+    if (!strongSelf) return;
 
-    strongSelf.runtime->processQueuedEvents([strongSelf](std::string const& type, elem::js::Value data) {
-      NSString *eventType = [NSString stringWithUTF8String:type.c_str()];
-      NSMutableDictionary *eventData = [NSMutableDictionary new];
-      eventData[@"type"] = eventType;
+    // processQueuedEvents reads Runtime::rtRenderSeq, a plain std::shared_ptr that
+    // the realtime thread reassigns inside Runtime::process. Copying it while it is
+    // being assigned is a data race (the control-block refcount is atomic, but the
+    // pointer pair is not read atomically), so this must take _runtimeMutex like
+    // every other runtime entry point.
+    //
+    // Events are collected here and delivered after the lock is released: the render
+    // callback try_locks and outputs silence when it cannot acquire, so holding the
+    // mutex across a JS bridge call would cause audible dropouts at the poll rate.
+    NSMutableArray<NSDictionary *> *pending = [NSMutableArray new];
 
-      if (data.isObject()) {
-        auto const& obj = data.getObject();
-        for (auto const& [key, val] : obj) {
-          NSString *nsKey = [NSString stringWithUTF8String:key.c_str()];
-          if (val.isNumber()) {
-            eventData[nsKey] = @((double)(elem::js::Number) val);
-          } else if (val.isString()) {
-            eventData[nsKey] = [NSString stringWithUTF8String:((std::string)(elem::js::String) val).c_str()];
+    {
+      std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
+      if (strongSelf.runtime == nullptr) return;
+
+      strongSelf.runtime->processQueuedEvents([pending](std::string const& type, elem::js::Value data) {
+        NSString *eventType = [NSString stringWithUTF8String:type.c_str()];
+        NSMutableDictionary *eventData = [NSMutableDictionary new];
+        eventData[@"type"] = eventType;
+
+        if (data.isObject()) {
+          auto const& obj = data.getObject();
+          for (auto const& [key, val] : obj) {
+            NSString *nsKey = [NSString stringWithUTF8String:key.c_str()];
+            if (val.isNumber()) {
+              eventData[nsKey] = @((double)(elem::js::Number) val);
+            } else if (val.isString()) {
+              eventData[nsKey] = [NSString stringWithUTF8String:((std::string)(elem::js::String) val).c_str()];
+            }
           }
+        } else if (data.isNumber()) {
+          eventData[@"data"] = @((double)(elem::js::Number) data);
         }
-      } else if (data.isNumber()) {
-        eventData[@"data"] = @((double)(elem::js::Number) data);
-      }
 
-      if (strongSelf->_hasEventListeners) {
-        [strongSelf sendEventWithName:@"elementaryEvent" body:eventData];
-      } // else: silently discard — no JS listeners yet
-    });
+        [pending addObject:eventData];
+      });
+    }
+
+    if (!strongSelf->_hasEventListeners) return; // silently discard — no JS listeners yet
+
+    for (NSDictionary *eventData in pending) {
+      [strongSelf sendEventWithName:@"elementaryEvent" body:eventData];
+    }
   });
 
   dispatch_resume(timer);
@@ -282,7 +325,10 @@ RCT_EXPORT_MODULE();
       // After a route change (e.g. Bluetooth/AirPlay), the session's
       // IOBufferDuration and sample rate may differ from what we used at init.
       AVAudioFormat *newFormat = [strongSelf.audioEngine.outputNode outputFormatForBus:0];
-      int newBufferSize = [strongSelf computeBufferSizeFromSession];
+      // Reuse the established block size: maximumFramesToRender does not change
+      // across route changes, and shrinking here would reintroduce the overrun.
+      int newBufferSize = MAX(gRuntimeBlockSize, [strongSelf computeBufferSizeFromSession]);
+      gRuntimeBlockSize = newBufferSize;
       NSLog(@"[Elementary] Recreating runtime: sampleRate=%.0f, blockSize=%d", newFormat.sampleRate, newBufferSize);
       {
         std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
@@ -421,6 +467,19 @@ RCT_EXPORT_MODULE();
   return options;
 }
 
+// Returns a block size large enough for any frameCount the render callback can
+// receive. AVAudioEngine never requests more than the unit's maximumFramesToRender.
+- (int)computeRuntimeBlockSizeForNode:(AVAudioSourceNode *)node {
+  // Take the larger of the source node's and the output node's limit: the render
+  // block is pulled through the output unit, so either can bound the frameCount.
+  int nodeMax = (int)node.AUAudioUnit.maximumFramesToRender;
+  int outputMax = (int)self.audioEngine.outputNode.AUAudioUnit.maximumFramesToRender;
+  int fromSession = [self computeBufferSizeFromSession];
+  int bufferSize = MAX(MAX(nodeMax, outputMax), fromSession);
+  if (bufferSize <= 0 || bufferSize > 8192) bufferSize = 4096; // safety fallback
+  return bufferSize;
+}
+
 - (int)computeBufferSizeFromSession {
   AVAudioSession *session = [AVAudioSession sharedInstance];
   AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
@@ -523,7 +582,10 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
   if (self.audioEngineInitialized) {
     auto parsed = elem::js::parseJSON([message UTF8String]);
     if (parsed.isArray()) {
+      // Checked under the lock: handleEngineConfigChange reassigns self.runtime
+      // while holding it, so testing outside would be a use-after-check.
       std::lock_guard<std::mutex> lock(_runtimeMutex);
+      if (self.runtime == nullptr) return;
       self.runtime->applyInstructions(parsed.getArray());
     }
     return;
@@ -537,6 +599,7 @@ RCT_EXPORT_METHOD(applyInstructions:(NSString *)message)
     auto parsed = elem::js::parseJSON([message UTF8String]);
     if (parsed.isArray()) {
       std::lock_guard<std::mutex> lock(self->_runtimeMutex);
+      if (self.runtime == nullptr) return;
       self.runtime->applyInstructions(parsed.getArray());
     }
   });
