@@ -29,6 +29,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Native audio stability regressions
+        run: |
+          clang++ -std=c++17 -pthread -fsanitize=address,undefined -fno-omit-frame-pointer ios/tests/AudioStabilityTests.cpp -o /tmp/audio-stability-tests
+          /tmp/audio-stability-tests
 
       - name: Setup
         uses: ./.github/actions/setup

@@ -11,12 +11,16 @@ describe('iOS render buffer safety', () => {
     expect(source).not.toContain(
       'for (UInt8 channel = 0; channel < numOutputChannels; channel++)'
     );
-    expect(source).toMatch(
-      /self\.runtime->process\([\s\S]*?outputBuffer,[\s\S]*?actualChannels,\s*frameCount/
+    expect(source).toContain(
+      'MIN(suppliedBufferCount, (UInt32)numOutputChannels)'
     );
     expect(source).toContain(
-      'self.audioEngine.outputNode.AUAudioUnit.maximumFramesToRender'
+      'outputBuffer->data(), actualChannels, frameCount'
     );
+    expect(source).toContain(
+      'frameCount > buffer.mDataByteSize / sizeof(float)'
+    );
+    expect(source).toContain('blockOutput, blockChannels, blockSize, nullptr');
   });
 
   it('keeps every replaceable runtime pointer access behind the mutex', () => {
@@ -53,10 +57,10 @@ describe('iOS render buffer safety', () => {
 
   it('serializes runtime replacement before route callbacks resume', () => {
     expect(source).toMatch(
-      /Runtime max block size[\s\S]*?lock\(_runtimeMutex\);[\s\S]*?self\.runtime =/
+      /Runtime fixed block size[\s\S]*?lock\(_runtimeMutex\);[\s\S]*?self\.runtime =/
     );
     expect(source).toMatch(
-      /dispatch_source_set_event_handler[\s\S]*?lock\(strongSelf->_runtimeMutex\);[\s\S]*?runtime = strongSelf\.runtime;[\s\S]*?runtime->processQueuedEvents/
+      /dispatch_source_set_event_handler[\s\S]*?pollRuntimeEvents\(strongSelf->_runtimeMutex,[\s\S]*?return strongSelf\.runtime;/
     );
 
     const initializerStart = source.indexOf(

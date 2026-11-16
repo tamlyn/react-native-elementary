@@ -1,6 +1,8 @@
 #import "Elementary.h"
 #import <TargetConditionals.h>
 
+#include <cmath>
+#include "QueuedEventPoller.h"
 #include "../cpp/AudioResourceLoader.h"
 #include "../cpp/vendor/elementary/runtime/elem/AudioBufferResource.h"
 
@@ -97,6 +99,10 @@ RCT_EXPORT_MODULE();
 }
 #endif
 
+- (BOOL)hasUsableOutputFormat:(AVAudioFormat *)format {
+  return format.channelCount > 0 && std::isfinite(format.sampleRate) && format.sampleRate > 0;
+}
+
 - (BOOL)initializeAudioEngineIfNeeded {
   if (self.audioEngineInitialized) {
     return YES;
@@ -126,12 +132,22 @@ RCT_EXPORT_MODULE();
   self.audioEngine = [[AVAudioEngine alloc] init];
 
   AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
-  AVAudioMixerNode *mixerNode = self.audioEngine.mainMixerNode;
-
   int numOutputChannels = outputFormat.channelCount;
 
-  const float **inputBuffer = (const float **)calloc(numOutputChannels, sizeof(float *));
-  float **outputBuffer = (float **)malloc(numOutputChannels * sizeof(float *));
+  if (![self hasUsableOutputFormat:outputFormat]) {
+    NSLog(@"[Elementary] Audio unavailable: invalid output format");
+    self.audioEngine = nil;
+#if TARGET_OS_SIMULATOR
+    [routePrimer stop];
+#endif
+    return NO;
+  }
+
+  AVAudioMixerNode *mixerNode = self.audioEngine.mainMixerNode;
+
+  // Captured owners release pointer storage when the source node is released.
+  auto inputBuffer = std::make_shared<std::vector<const float *>>(numOutputChannels, nullptr);
+  auto outputBuffer = std::make_shared<std::vector<float *>>(numOutputChannels, nullptr);
 
   NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f, IOBufferDuration=%.4fs",
         numOutputChannels, outputFormat.sampleRate, [AVAudioSession sharedInstance].IOBufferDuration);
@@ -146,8 +162,10 @@ RCT_EXPORT_MODULE();
       UInt32 actualChannels = MIN(suppliedBufferCount, (UInt32)numOutputChannels);
 
       for (UInt32 channel = 0; channel < suppliedBufferCount; channel++) {
-          memset(audioBufferList->mBuffers[channel].mData, 0,
-                 audioBufferList->mBuffers[channel].mDataByteSize);
+          if (audioBufferList->mBuffers[channel].mData != nullptr) {
+              memset(audioBufferList->mBuffers[channel].mData, 0,
+                     audioBufferList->mBuffers[channel].mDataByteSize);
+          }
       }
 
       // Try to acquire the lock without blocking. If applyInstructions
@@ -159,17 +177,22 @@ RCT_EXPORT_MODULE();
       }
 
       for (UInt32 channel = 0; channel < actualChannels; channel++) {
-          outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
+          const AudioBuffer& buffer = audioBufferList->mBuffers[channel];
+          if (buffer.mData == nullptr || buffer.mNumberChannels != 1 ||
+              frameCount > buffer.mDataByteSize / sizeof(float)) {
+              return noErr;
+          }
+          (*outputBuffer)[channel] = (float*)buffer.mData;
       }
 
-      self.runtime->process(
-          inputBuffer,
-          actualChannels,
-          outputBuffer,
-          actualChannels,
-          frameCount,
-          nullptr
-      );
+      // Preserve feedback history: every DSP call must use the same block size,
+      // even when the host asks for a short remainder or an oversized callback.
+      self->_fixedBlockRenderer.render(
+          outputBuffer->data(), actualChannels, frameCount,
+          [&](float **blockOutput, std::size_t blockChannels, std::size_t blockSize) {
+              self.runtime->process(inputBuffer->data(), numOutputChannels,
+                                    blockOutput, blockChannels, blockSize, nullptr);
+          });
 
       return noErr;
   }];
@@ -177,10 +200,11 @@ RCT_EXPORT_MODULE();
   [self.audioEngine attachNode:sourceNode];
   [self.audioEngine connect:sourceNode to:mixerNode format:outputFormat];
 
-  int bufferSize = [self computeMaximumRenderFrames];
-  NSLog(@"[Elementary] Runtime max block size: %d frames", bufferSize);
+  int bufferSize = [self computeBufferSizeFromSession];
+  NSLog(@"[Elementary] Runtime fixed block size: %d frames", bufferSize);
   {
     std::lock_guard<std::mutex> lock(_runtimeMutex);
+    _fixedBlockRenderer.configure(numOutputChannels, bufferSize);
     self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
   }
 
@@ -234,13 +258,9 @@ RCT_EXPORT_MODULE();
     Elementary *strongSelf = weakSelf;
     if (!strongSelf) return;
 
-    std::shared_ptr<elem::Runtime<float>> runtime;
-    {
-      std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
-      runtime = strongSelf.runtime;
-    }
-    if (runtime == nullptr) return;
-    runtime->processQueuedEvents([strongSelf](std::string const& type, elem::js::Value data) {
+    pollRuntimeEvents(strongSelf->_runtimeMutex,
+                      [strongSelf] { return strongSelf.runtime; },
+                      [strongSelf](std::string const& type, elem::js::Value const& data) {
       NSString *eventType = [NSString stringWithUTF8String:type.c_str()];
       NSMutableDictionary *eventData = [NSMutableDictionary new];
       eventData[@"type"] = eventType;
@@ -319,15 +339,20 @@ RCT_EXPORT_MODULE();
     strongSelf.audioSessionActive = NO;
     if (![strongSelf setAudioSessionActive:YES error:&error]) {
       NSLog(@"[Elementary] Failed to reactivate audio session after config change: %@", error.localizedDescription);
-      error = nil;
+      return;
     }
     // Resize the runtime while the engine is stopped so no callback can observe
     // the previous route's capacity after the new route starts rendering.
     AVAudioFormat *newFormat = [strongSelf.audioEngine.outputNode outputFormatForBus:0];
-    int newBufferSize = [strongSelf computeMaximumRenderFrames];
-    NSLog(@"[Elementary] Recreating runtime: sampleRate=%.0f, maxBlockSize=%d", newFormat.sampleRate, newBufferSize);
+    if (![strongSelf hasUsableOutputFormat:newFormat]) {
+      NSLog(@"[Elementary] Audio unavailable after route change: invalid output format");
+      return;
+    }
+    int newBufferSize = [strongSelf computeBufferSizeFromSession];
+    NSLog(@"[Elementary] Recreating runtime: sampleRate=%.0f, blockSize=%d", newFormat.sampleRate, newBufferSize);
     {
       std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
+      strongSelf->_fixedBlockRenderer.configure(newFormat.channelCount, newBufferSize);
       strongSelf.runtime = std::make_shared<elem::Runtime<float>>(newFormat.sampleRate, newBufferSize);
     }
 
@@ -468,9 +493,10 @@ RCT_EXPORT_MODULE();
   return options;
 }
 
-- (int)computeMaximumRenderFrames {
-  int maximumFrames = (int)self.audioEngine.outputNode.AUAudioUnit.maximumFramesToRender;
-  return maximumFrames > 0 ? maximumFrames : 4096;
+- (int)computeBufferSizeFromSession {
+  AVAudioSession *session = [AVAudioSession sharedInstance];
+  double frames = [self.audioEngine.outputNode outputFormatForBus:0].sampleRate * session.IOBufferDuration;
+  return std::isfinite(frames) && frames >= 1 && frames <= 4096 ? (int)std::round(frames) : 512;
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -544,7 +570,13 @@ RCT_EXPORT_METHOD(disableAudioSessionManagement)
 RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
                       rejecter:(RCTPromiseRejectBlock)reject)
 {
-  [self dispatchMainWithEngineInit:^{
+  // Diagnostics must not realize a cold AVAudioEngine during navigation/import.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!self.audioEngineInitialized || self.audioEngine == nil) {
+      resolve(@{@"channels": @0, @"sampleRate": @0,
+                @"engineRunning": @NO, @"runtimeReady": @NO});
+      return;
+    }
     AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
     BOOL runtimeReady;
     {
@@ -557,7 +589,7 @@ RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
       @"engineRunning": @(self.audioEngine.isRunning),
       @"runtimeReady": @(runtimeReady),
     });
-  } reject:reject];
+  });
 }
 
 #pragma mark - React Native Methods

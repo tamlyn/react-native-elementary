@@ -61,12 +61,13 @@ describe('iOS Simulator audio route priming', () => {
     );
     const engineStart = initializer.indexOf('startAndReturnError');
     const primerStops = initializer.match(/\[routePrimer stop\]/g) ?? [];
-    const primerStop = initializer.indexOf('[routePrimer stop]');
+    const primerStop = initializer.lastIndexOf('[routePrimer stop]');
     expect(primerStart).toBeGreaterThanOrEqual(0);
     expect(engineAllocation).toBeGreaterThanOrEqual(0);
     expect(engineStart).toBeGreaterThanOrEqual(0);
     expect(primerStop).toBeGreaterThanOrEqual(0);
-    expect(primerStops).toHaveLength(2);
+    // Invalid format, failed engine start, and successful start all release it.
+    expect(primerStops).toHaveLength(3);
     expect(primerStart).toBeLessThan(engineAllocation);
     expect(primerStop).toBeGreaterThan(engineStart);
   });
