@@ -2,6 +2,7 @@
 #import "../cpp/vendor/elementary/runtime/elem/Runtime.h"
 #import <AVFoundation/AVFoundation.h>
 #include <mutex>
+#include "../cpp/PCMReadbackStore.h"
 #include "FixedBlockRenderer.h"
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -13,6 +14,10 @@
     /// and the JS thread (applyInstructions / setProperty). The audio callback
     /// uses try_lock — outputs silence on contention rather than blocking.
     std::mutex _runtimeMutex;
+    elementary::PCMReadbackStore _pcmReadback;
+    /// Serves the host's variable-size callbacks from fixed, runtime-sized
+    /// blocks (see FixedBlockRenderer.h). Configured together with runtime
+    /// under _runtimeMutex.
     FixedBlockRenderer _fixedBlockRenderer;
     int _listenerCount;
     BOOL _hasEventListeners;
@@ -25,6 +30,10 @@
 
 @interface Elementary : RCTEventEmitter <RCTBridgeModule> {
     std::mutex _runtimeMutex;
+    elementary::PCMReadbackStore _pcmReadback;
+    /// Serves the host's variable-size callbacks from fixed, runtime-sized
+    /// blocks (see FixedBlockRenderer.h). Configured together with runtime
+    /// under _runtimeMutex.
     FixedBlockRenderer _fixedBlockRenderer;
     int _listenerCount;
     BOOL _hasEventListeners;

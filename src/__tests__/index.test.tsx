@@ -5,6 +5,8 @@ const mockElementary = {
   getAudioInfo: jest.fn(),
   getSampleRate: jest.fn(),
   loadAudioResource: jest.fn(),
+  loadAudioResourceForReadback: jest.fn(),
+  readAudioResourcePCM: jest.fn(),
   unloadAudioResource: jest.fn(),
   applyInstructions: jest.fn(),
   setProperty: jest.fn(),
@@ -74,6 +76,62 @@ describe('react-native-elementary', () => {
       await expect(
         loadAudioResource('kick', '/path/to/kick.wav')
       ).rejects.toThrow('Failed to initialize audio engine');
+    });
+  });
+
+  describe('PCM readback', () => {
+    it('loads a file for readback and returns source metadata', async () => {
+      const info = {
+        key: 'import-1',
+        channels: 2,
+        sampleCount: 48000,
+        sampleRate: 48000,
+        durationMs: 1000,
+      };
+      mockElementary.loadAudioResourceForReadback.mockResolvedValueOnce(info);
+      const { loadAudioResourceForReadback } = require('../index');
+      await expect(
+        loadAudioResourceForReadback('import-1', '/path/to/audio.flac')
+      ).resolves.toEqual(info);
+      expect(mockElementary.loadAudioResourceForReadback).toHaveBeenCalledWith(
+        'import-1',
+        '/path/to/audio.flac'
+      );
+      expect(mockElementary.loadAudioResource).not.toHaveBeenCalled();
+    });
+
+    it('propagates decoder errors for failed imports', async () => {
+      mockElementary.loadAudioResourceForReadback.mockRejectedValueOnce(
+        new Error('Failed to open audio file')
+      );
+      const { loadAudioResourceForReadback } = require('../index');
+      await expect(
+        loadAudioResourceForReadback('import-1', '/path/to/unsupported.m4a')
+      ).rejects.toThrow('Failed to open audio file');
+    });
+
+    it('passes frame offsets and returns interleaved samples unchanged', async () => {
+      const samples = [0.25, -0.5, 0.75, -1];
+      mockElementary.readAudioResourcePCM.mockResolvedValueOnce(samples);
+      const { readAudioResourcePCM } = require('../index');
+      await expect(readAudioResourcePCM('import-1', 500, 2)).resolves.toEqual(
+        samples
+      );
+      expect(mockElementary.readAudioResourcePCM).toHaveBeenCalledWith(
+        'import-1',
+        500,
+        2
+      );
+    });
+
+    it('propagates native range validation errors', async () => {
+      mockElementary.readAudioResourcePCM.mockRejectedValueOnce(
+        new Error('Invalid PCM frame range')
+      );
+      const { readAudioResourcePCM } = require('../index');
+      await expect(readAudioResourcePCM('import-1', 0, 16385)).rejects.toThrow(
+        'Invalid PCM frame range'
+      );
     });
   });
 

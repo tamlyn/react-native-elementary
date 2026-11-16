@@ -40,6 +40,9 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
+      - name: Native file decode and PCM readback regressions
+        run: yarn test:pcm-readback
+
       - name: Run unit tests
         run: yarn test --maxWorkers=2 --coverage
 

@@ -61,8 +61,8 @@ namespace elementary {
         }
     }
 
-    AudioLoadResult AudioEngine::loadAudioResource(const std::string& key, const std::string& filePath) {
-        AudioLoadResult result = AudioResourceLoader::loadFile(key, filePath);
+    AudioLoadResult AudioEngine::loadAudioResource(const std::string& key, const std::string& filePath, bool readback) {
+        AudioLoadResult result = AudioResourceLoader::loadFile(key, filePath, readback);
 
         if (!result.success) {
             return result;
@@ -100,6 +100,13 @@ namespace elementary {
         {
             std::lock_guard<std::mutex> lock(resourceMutex);
             loadedResources.insert(key);
+            if (readback) {
+                AudioLoadResult metadata{};
+                metadata.success = true;
+                metadata.info = result.info;
+                pcmReadback.put(key, std::move(result));
+                return metadata;
+            }
         }
 
         return result;
@@ -110,6 +117,7 @@ namespace elementary {
 
         {
             std::lock_guard<std::mutex> lock(resourceMutex);
+            pcmReadback.erase(key);
             auto it = loadedResources.find(key);
             if (it != loadedResources.end()) {
                 loadedResources.erase(it);

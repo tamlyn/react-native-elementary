@@ -175,9 +175,18 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
 
   @ReactMethod
   fun loadAudioResource(key: String, filePath: String, promise: Promise) {
+    loadResource(key, filePath, false, promise)
+  }
+
+  @ReactMethod
+  fun loadAudioResourceForReadback(key: String, filePath: String, promise: Promise) {
+    loadResource(key, filePath, true, promise)
+  }
+
+  private fun loadResource(key: String, filePath: String, readback: Boolean, promise: Promise) {
     Thread {
       try {
-        val result = nativeLoadAudioResource(key, filePath)
+        val result = nativeLoadAudioResource(key, filePath, readback)
         if (result == null) {
           promise.reject("E_NATIVE_ERROR", "Native audio engine not initialized")
           return@Thread
@@ -198,6 +207,21 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
         promise.resolve(info)
       } catch (e: Exception) {
         promise.reject("E_LOAD_FAILED", e.message, e)
+      }
+    }.start()
+  }
+
+  @ReactMethod
+  fun readAudioResourcePCM(key: String, startFrame: Double, frameCount: Double, promise: Promise) {
+    Thread {
+      try {
+        val pcm = nativeReadAudioResourcePCM(key, startFrame, frameCount)
+          ?: throw IllegalStateException("Native audio engine not initialized")
+        val samples = Arguments.createArray()
+        pcm.forEach { samples.pushDouble(it.toDouble()) }
+        promise.resolve(samples)
+      } catch (e: Exception) {
+        promise.reject("E_PCM_READ", e.message, e)
       }
     }.start()
   }
@@ -413,7 +437,8 @@ class ElementaryModule(reactContext: ReactApplicationContext) :
   external fun nativeStartAudioEngine()
   external fun nativeStopDevice()
   external fun nativeStartDevice()
-  external fun nativeLoadAudioResource(key: String, filePath: String): AudioResourceInfo?
+  external fun nativeLoadAudioResource(key: String, filePath: String, readback: Boolean): AudioResourceInfo?
+  external fun nativeReadAudioResourcePCM(key: String, start: Double, count: Double): FloatArray?
   external fun nativeUnloadAudioResource(key: String): Boolean
   external fun nativeProcessQueuedEvents(): String
 }

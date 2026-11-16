@@ -69,7 +69,7 @@ Java_com_elementary_ElementaryModule_nativeStartDevice(JNIEnv *env, jclass type)
 
 extern "C"
 JNIEXPORT jobject JNICALL
-Java_com_elementary_ElementaryModule_nativeLoadAudioResource(JNIEnv *env, jclass type, jstring key, jstring filePath) {
+Java_com_elementary_ElementaryModule_nativeLoadAudioResource(JNIEnv *env, jclass type, jstring key, jstring filePath, jboolean readback) {
     if (!audioEngine) {
         return nullptr;
     }
@@ -90,7 +90,7 @@ Java_com_elementary_ElementaryModule_nativeLoadAudioResource(JNIEnv *env, jclass
     env->ReleaseStringUTFChars(filePath, filePathCStr);
 
     // Load the audio resource
-    elementary::AudioLoadResult result = audioEngine->loadAudioResource(keyStr, filePathStr);
+    elementary::AudioLoadResult result = audioEngine->loadAudioResource(keyStr, filePathStr, readback);
 
     // Find the AudioResourceInfo class
     jclass infoClass = env->FindClass("com/elementary/AudioResourceInfo");
@@ -121,6 +121,25 @@ Java_com_elementary_ElementaryModule_nativeLoadAudioResource(JNIEnv *env, jclass
     );
 
     return infoObj;
+}
+
+extern "C"
+JNIEXPORT jfloatArray JNICALL
+Java_com_elementary_ElementaryModule_nativeReadAudioResourcePCM(JNIEnv *env, jclass type, jstring key, jdouble start, jdouble count) {
+    if (!audioEngine) return nullptr;
+    const char *keyChars = env->GetStringUTFChars(key, nullptr);
+    if (!keyChars) return nullptr;
+    const std::string keyStr(keyChars);
+    env->ReleaseStringUTFChars(key, keyChars);
+    try {
+        const auto pcm = audioEngine->pcmReadback.read(keyStr, start, count);
+        jfloatArray result = env->NewFloatArray(static_cast<jsize>(pcm.size()));
+        if (result) env->SetFloatArrayRegion(result, 0, static_cast<jsize>(pcm.size()), pcm.data());
+        return result;
+    } catch (const std::exception& error) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalArgumentException"), error.what());
+        return nullptr;
+    }
 }
 
 extern "C"

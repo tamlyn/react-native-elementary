@@ -41,9 +41,10 @@ namespace elementary {
          * Load an audio file from disk
          * @param key - Unique identifier for this resource
          * @param filePath - Absolute path to the audio file
+         * @param boundedReadback - Enforce mono/stereo, rate, duration and PCM-size import limits
          * @return AudioLoadResult containing the audio data and metadata, or error info
          */
-        static AudioLoadResult loadFile(const std::string& key, const std::string& filePath);
+        static AudioLoadResult loadFile(const std::string& key, const std::string& filePath, bool boundedReadback = false);
     };
 
 } // namespace elementary

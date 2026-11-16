@@ -697,12 +697,54 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
                            rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
+  [self loadResource:key filePath:filePath readback:NO resolve:resolve reject:reject];
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)loadAudioResourceForReadback:(NSString *)key filePath:(NSString *)filePath
+                           resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(loadAudioResourceForReadback:(NSString *)key filePath:(NSString *)filePath
+                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  // Sampler import only needs bounded PCM readback. Do not cold-start
+  // AVAudioEngine here: document-picker/system UI sounds can have AudioToolbox
+  // in the middle of starting IO, and touching AVAudioEngine.outputNode during
+  // that window can abort the process via AURemoteIO RPC timeout.
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    std::string keyStr = [key UTF8String];
+    std::string filePathStr = [filePath UTF8String];
+
+    elementary::AudioLoadResult result = elementary::AudioResourceLoader::loadFile(keyStr, filePathStr, true);
+
+    if (!result.success) {
+      reject(@"E_LOAD_FAILED", [NSString stringWithUTF8String:result.error.c_str()], nil);
+      return;
+    }
+
+    NSDictionary *info = @{
+      @"key": key,
+      @"channels": @(result.info.channels),
+      @"sampleCount": @(result.info.sampleCount),
+      @"sampleRate": @(result.info.sampleRate),
+      @"durationMs": @(result.info.durationMs)
+    };
+
+    self->_pcmReadback.put(keyStr, std::move(result));
+    resolve(info);
+  });
+}
+
+- (void)loadResource:(NSString *)key filePath:(NSString *)filePath readback:(BOOL)readback
+            resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+{
   [self dispatchMainWithEngineInit:^{
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
       std::string keyStr = [key UTF8String];
       std::string filePathStr = [filePath UTF8String];
 
-      elementary::AudioLoadResult result = elementary::AudioResourceLoader::loadFile(keyStr, filePathStr);
+      elementary::AudioLoadResult result = elementary::AudioResourceLoader::loadFile(keyStr, filePathStr, readback);
 
       if (!result.success) {
         reject(@"E_LOAD_FAILED", [NSString stringWithUTF8String:result.error.c_str()], nil);
@@ -740,10 +782,6 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
         return;
       }
 
-      @synchronized(self.loadedResources) {
-        [self.loadedResources addObject:key];
-      }
-
       NSDictionary *info = @{
         @"key": key,
         @"channels": @(result.info.channels),
@@ -752,9 +790,33 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
         @"durationMs": @(result.info.durationMs)
       };
 
+      @synchronized(self.loadedResources) {
+        if (readback) self->_pcmReadback.put(keyStr, std::move(result));
+        [self.loadedResources addObject:key];
+      }
       resolve(info);
     });
   } reject:reject];
+}
+
+#ifdef RCT_NEW_ARCH_ENABLED
+- (void)readAudioResourcePCM:(NSString *)key startFrame:(double)startFrame frameCount:(double)frameCount
+                    resolve:(RCTPromiseResolveBlock)resolve reject:(RCTPromiseRejectBlock)reject
+#else
+RCT_EXPORT_METHOD(readAudioResourcePCM:(NSString *)key startFrame:(double)startFrame frameCount:(double)frameCount
+                  resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+#endif
+{
+  dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+    try {
+      auto pcm = self->_pcmReadback.read([key UTF8String], startFrame, frameCount);
+      NSMutableArray *samples = [NSMutableArray arrayWithCapacity:pcm.size()];
+      for (float value : pcm) [samples addObject:@(value)];
+      resolve(samples);
+    } catch (const std::exception& error) {
+      reject(@"E_PCM_READ", [NSString stringWithUTF8String:error.what()], nil);
+    }
+  });
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -767,11 +829,14 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
                              rejecter:(RCTPromiseRejectBlock)reject)
 #endif
 {
+  // Readback-only decoder loads do not start AVAudioEngine, so always clear
+  // that cache before deciding whether a live runtime exists.
+  BOOL removedReadback = self->_pcmReadback.erase([key UTF8String]);
+
   // unloadAudioResource does not require the audio engine to be running.
-  // If the engine was never initialized, there are no resources to unload —
-  // resolve immediately with NO without touching AVAudioEngine.
+  // If the engine was never initialized, only the readback cache can own it.
   if (!self.audioEngineInitialized) {
-    resolve(@(NO));
+    resolve(@(removedReadback));
     return;
   }
 
@@ -794,7 +859,7 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
       }
     }
 
-    resolve(@(found));
+    resolve(@(found || removedReadback));
   });
 }
 

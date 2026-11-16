@@ -24,6 +24,17 @@ export interface Spec extends TurboModule {
   // VFS methods
   loadAudioResource(key: string, filePath: string): Promise<AudioResourceInfo>;
   unloadAudioResource(key: string): Promise<boolean>;
+  // Bounded (60s, mono/stereo, 32 MiB PCM) load retaining PCM until unload.
+  loadAudioResourceForReadback(
+    key: string,
+    filePath: string
+  ): Promise<AudioResourceInfo>;
+  // Interleaved samples at the source rate; integer ranges, max 16384 frames.
+  readAudioResourcePCM(
+    key: string,
+    startFrame: number,
+    frameCount: number
+  ): Promise<number[]>;
 
   // Path helpers
   getDocumentsDirectory(): Promise<string>;
