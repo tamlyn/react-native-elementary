@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1-beta.4
 
 ### Bug Fixes
 
