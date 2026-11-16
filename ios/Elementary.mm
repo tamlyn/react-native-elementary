@@ -1,9 +1,23 @@
 #import "Elementary.h"
+#import <TargetConditionals.h>
 
+#include <cmath>
+#include "QueuedEventPoller.h"
 #include "../cpp/AudioResourceLoader.h"
 #include "../cpp/vendor/elementary/runtime/elem/AudioBufferResource.h"
 
 static Elementary *_sharedInstance = nil;
+
+#if TARGET_OS_SIMULATOR
+// 100 ms of stereo 16-bit PCM silence avoids needlessly looping a one-frame
+// asset at audio rate while the shared engine starts.
+static const unsigned char kSimulatorRoutePrimerWav[17684] = {
+  0x52, 0x49, 0x46, 0x46, 0x0c, 0x45, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45,
+  0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00,
+  0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00, 0x04, 0x00, 0x10, 0x00,
+  0x64, 0x61, 0x74, 0x61, 0xe8, 0x44, 0x00, 0x00,
+};
+#endif
 
 @implementation Elementary
 
@@ -68,6 +82,27 @@ RCT_EXPORT_MODULE();
   });
 }
 
+#if TARGET_OS_SIMULATOR
+- (AVAudioPlayer *)startSimulatorAudioRoutePrimer {
+  NSData *silence = [NSData dataWithBytes:kSimulatorRoutePrimerWav
+                                   length:sizeof(kSimulatorRoutePrimerWav)];
+  NSError *error = nil;
+  AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithData:silence error:&error];
+  player.numberOfLoops = -1;
+  player.volume = 0.0f;
+  if (!player || ![player play]) {
+    NSLog(@"[Elementary] Failed to prime Simulator audio route: %@", error.localizedDescription);
+    return nil;
+  }
+  NSLog(@"[Elementary] Simulator audio route primed");
+  return player;
+}
+#endif
+
+- (BOOL)hasUsableOutputFormat:(AVAudioFormat *)format {
+  return format.channelCount > 0 && std::isfinite(format.sampleRate) && format.sampleRate > 0;
+}
+
 - (BOOL)initializeAudioEngineIfNeeded {
   if (self.audioEngineInitialized) {
     return YES;
@@ -81,20 +116,38 @@ RCT_EXPORT_MODULE();
 
   // Configure and activate the audio session before creating AVAudioEngine.
   NSError *sessionError = nil;
-  [self setAudioSessionActive:YES error:&sessionError];
-  if (sessionError) {
+  if (![self setAudioSessionActive:YES error:&sessionError]) {
     NSLog(@"[Elementary] Failed to activate audio session: %@", sessionError.localizedDescription);
+    return NO;
   }
+
+#if TARGET_OS_SIMULATOR
+  // Simulator CoreAudio can abort if its host output starts while the first
+  // AURemoteIO is being reconfigured. Hold a silent client until the shared
+  // engine is running so that cleanup never races a cold device start.
+  AVAudioPlayer *routePrimer = [self startSimulatorAudioRoutePrimer];
+  if (!routePrimer) return NO;
+#endif
 
   self.audioEngine = [[AVAudioEngine alloc] init];
 
   AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
-  AVAudioMixerNode *mixerNode = self.audioEngine.mainMixerNode;
-
   int numOutputChannels = outputFormat.channelCount;
 
-  const float **inputBuffer = (const float **)calloc(numOutputChannels, sizeof(float *));
-  float **outputBuffer = (float **)malloc(numOutputChannels * sizeof(float *));
+  if (![self hasUsableOutputFormat:outputFormat]) {
+    NSLog(@"[Elementary] Audio unavailable: invalid output format");
+    self.audioEngine = nil;
+#if TARGET_OS_SIMULATOR
+    [routePrimer stop];
+#endif
+    return NO;
+  }
+
+  AVAudioMixerNode *mixerNode = self.audioEngine.mainMixerNode;
+
+  // Captured owners release pointer storage when the source node is released.
+  auto inputBuffer = std::make_shared<std::vector<const float *>>(numOutputChannels, nullptr);
+  auto outputBuffer = std::make_shared<std::vector<float *>>(numOutputChannels, nullptr);
 
   NSLog(@"[Elementary] Init: %d output channels, sampleRate=%.0f, IOBufferDuration=%.4fs",
         numOutputChannels, outputFormat.sampleRate, [AVAudioSession sharedInstance].IOBufferDuration);
@@ -105,37 +158,41 @@ RCT_EXPORT_MODULE();
           AVAudioFrameCount frameCount,
           AudioBufferList * _Nonnull audioBufferList) {
 
-      UInt32 actualChannels = audioBufferList->mNumberBuffers;
+      UInt32 suppliedBufferCount = audioBufferList->mNumberBuffers;
+      UInt32 actualChannels = MIN(suppliedBufferCount, (UInt32)numOutputChannels);
 
-      for (UInt32 channel = 0; channel < actualChannels; channel++) {
-          memset(audioBufferList->mBuffers[channel].mData, 0,
-                 audioBufferList->mBuffers[channel].mDataByteSize);
-      }
-
-      if (self.runtime == nullptr) {
-          return noErr;
+      for (UInt32 channel = 0; channel < suppliedBufferCount; channel++) {
+          if (audioBufferList->mBuffers[channel].mData != nullptr) {
+              memset(audioBufferList->mBuffers[channel].mData, 0,
+                     audioBufferList->mBuffers[channel].mDataByteSize);
+          }
       }
 
       // Try to acquire the lock without blocking. If applyInstructions
       // is in progress on the JS thread, output silence for this block
       // rather than risking heap corruption from concurrent access.
       std::unique_lock<std::mutex> lock(self->_runtimeMutex, std::try_to_lock);
-      if (!lock.owns_lock()) {
+      if (!lock.owns_lock() || self.runtime == nullptr || actualChannels == 0) {
           return noErr;
       }
 
-      for (UInt8 channel = 0; channel < numOutputChannels; channel++) {
-          outputBuffer[channel] = (float*)audioBufferList->mBuffers[channel].mData;
+      for (UInt32 channel = 0; channel < actualChannels; channel++) {
+          const AudioBuffer& buffer = audioBufferList->mBuffers[channel];
+          if (buffer.mData == nullptr || buffer.mNumberChannels != 1 ||
+              frameCount > buffer.mDataByteSize / sizeof(float)) {
+              return noErr;
+          }
+          (*outputBuffer)[channel] = (float*)buffer.mData;
       }
 
-      self.runtime->process(
-          inputBuffer,
-          numOutputChannels,
-          outputBuffer,
-          numOutputChannels,
-          frameCount,
-          nullptr
-      );
+      // Preserve feedback history: every DSP call must use the same block size,
+      // even when the host asks for a short remainder or an oversized callback.
+      self->_fixedBlockRenderer.render(
+          outputBuffer->data(), actualChannels, frameCount,
+          [&](float **blockOutput, std::size_t blockChannels, std::size_t blockSize) {
+              self.runtime->process(inputBuffer->data(), numOutputChannels,
+                                    blockOutput, blockChannels, blockSize, nullptr);
+          });
 
       return noErr;
   }];
@@ -143,16 +200,25 @@ RCT_EXPORT_MODULE();
   [self.audioEngine attachNode:sourceNode];
   [self.audioEngine connect:sourceNode to:mixerNode format:outputFormat];
 
+  int bufferSize = [self computeBufferSizeFromSession];
+  NSLog(@"[Elementary] Runtime fixed block size: %d frames", bufferSize);
+  {
+    std::lock_guard<std::mutex> lock(_runtimeMutex);
+    _fixedBlockRenderer.configure(numOutputChannels, bufferSize);
+    self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
+  }
+
   NSError *error = nil;
   if (![self.audioEngine startAndReturnError:&error]) {
+#if TARGET_OS_SIMULATOR
+    [routePrimer stop];
+#endif
     NSLog(@"Error starting audio engine: %@", error.localizedDescription);
     return NO;
   }
-
-  // Use granted IOBufferDuration — iOS may not honor the preferred value exactly.
-  int bufferSize = [self computeBufferSizeFromSession];
-  NSLog(@"[Elementary] Runtime block size: %d frames", bufferSize);
-  self.runtime = std::make_shared<elem::Runtime<float>>(outputFormat.sampleRate, bufferSize);
+#if TARGET_OS_SIMULATOR
+  [routePrimer stop];
+#endif
 
   [[NSNotificationCenter defaultCenter] addObserver:self
                                            selector:@selector(handleAudioInterruption:)
@@ -190,9 +256,11 @@ RCT_EXPORT_MODULE();
   __weak Elementary *weakSelf = self;
   dispatch_source_set_event_handler(timer, ^{
     Elementary *strongSelf = weakSelf;
-    if (!strongSelf || strongSelf.runtime == nullptr) return;
+    if (!strongSelf) return;
 
-    strongSelf.runtime->processQueuedEvents([strongSelf](std::string const& type, elem::js::Value data) {
+    pollRuntimeEvents(strongSelf->_runtimeMutex,
+                      [strongSelf] { return strongSelf.runtime; },
+                      [strongSelf](std::string const& type, elem::js::Value const& data) {
       NSString *eventType = [NSString stringWithUTF8String:type.c_str()];
       NSMutableDictionary *eventData = [NSMutableDictionary new];
       eventData[@"type"] = eventType;
@@ -271,23 +339,27 @@ RCT_EXPORT_MODULE();
     strongSelf.audioSessionActive = NO;
     if (![strongSelf setAudioSessionActive:YES error:&error]) {
       NSLog(@"[Elementary] Failed to reactivate audio session after config change: %@", error.localizedDescription);
-      error = nil;
+      return;
     }
+    // Resize the runtime while the engine is stopped so no callback can observe
+    // the previous route's capacity after the new route starts rendering.
+    AVAudioFormat *newFormat = [strongSelf.audioEngine.outputNode outputFormatForBus:0];
+    if (![strongSelf hasUsableOutputFormat:newFormat]) {
+      NSLog(@"[Elementary] Audio unavailable after route change: invalid output format");
+      return;
+    }
+    int newBufferSize = [strongSelf computeBufferSizeFromSession];
+    NSLog(@"[Elementary] Recreating runtime: sampleRate=%.0f, blockSize=%d", newFormat.sampleRate, newBufferSize);
+    {
+      std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
+      strongSelf->_fixedBlockRenderer.configure(newFormat.channelCount, newBufferSize);
+      strongSelf.runtime = std::make_shared<elem::Runtime<float>>(newFormat.sampleRate, newBufferSize);
+    }
+
     if (![strongSelf.audioEngine startAndReturnError:&error]) {
       NSLog(@"[Elementary] Failed to restart engine after config change: %@", error.localizedDescription);
     } else {
       NSLog(@"[Elementary] Engine restarted after config change");
-
-      // Recreate runtime with updated sample rate and block size.
-      // After a route change (e.g. Bluetooth/AirPlay), the session's
-      // IOBufferDuration and sample rate may differ from what we used at init.
-      AVAudioFormat *newFormat = [strongSelf.audioEngine.outputNode outputFormatForBus:0];
-      int newBufferSize = [strongSelf computeBufferSizeFromSession];
-      NSLog(@"[Elementary] Recreating runtime: sampleRate=%.0f, blockSize=%d", newFormat.sampleRate, newBufferSize);
-      {
-        std::lock_guard<std::mutex> lock(strongSelf->_runtimeMutex);
-        strongSelf.runtime = std::make_shared<elem::Runtime<float>>(newFormat.sampleRate, newBufferSize);
-      }
     }
   });
 }
@@ -423,10 +495,8 @@ RCT_EXPORT_MODULE();
 
 - (int)computeBufferSizeFromSession {
   AVAudioSession *session = [AVAudioSession sharedInstance];
-  AVAudioFormat *outputFormat = [self.audioEngine.outputNode outputFormatForBus:0];
-  int bufferSize = (int)round(outputFormat.sampleRate * session.IOBufferDuration);
-  if (bufferSize <= 0 || bufferSize > 4096) bufferSize = 512; // safety fallback
-  return bufferSize;
+  double frames = [self.audioEngine.outputNode outputFormatForBus:0].sampleRate * session.IOBufferDuration;
+  return std::isfinite(frames) && frames >= 1 && frames <= 4096 ? (int)std::round(frames) : 512;
 }
 
 #ifdef RCT_NEW_ARCH_ENABLED
@@ -500,15 +570,26 @@ RCT_EXPORT_METHOD(disableAudioSessionManagement)
 RCT_EXPORT_METHOD(getAudioInfo:(RCTPromiseResolveBlock)resolve
                       rejecter:(RCTPromiseRejectBlock)reject)
 {
-  [self dispatchMainWithEngineInit:^{
+  // Diagnostics must not realize a cold AVAudioEngine during navigation/import.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!self.audioEngineInitialized || self.audioEngine == nil) {
+      resolve(@{@"channels": @0, @"sampleRate": @0,
+                @"engineRunning": @NO, @"runtimeReady": @NO});
+      return;
+    }
     AVAudioFormat *format = [self.audioEngine.outputNode outputFormatForBus:0];
+    BOOL runtimeReady;
+    {
+      std::lock_guard<std::mutex> lock(_runtimeMutex);
+      runtimeReady = self.runtime != nullptr;
+    }
     resolve(@{
       @"channels": @(format.channelCount),
       @"sampleRate": @(format.sampleRate),
       @"engineRunning": @(self.audioEngine.isRunning),
-      @"runtimeReady": @(self.runtime != nullptr),
+      @"runtimeReady": @(runtimeReady),
     });
-  } reject:reject];
+  });
 }
 
 #pragma mark - React Native Methods
@@ -549,7 +630,7 @@ RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double
 #endif
 {
   // Fast path: engine already initialized — update synchronously.
-  if (self.audioEngineInitialized && self.runtime != nullptr) {
+  if (self.audioEngineInitialized) {
     elem::js::Array instruction;
     instruction.push_back((double)3);
     instruction.push_back(nodeHash);
@@ -561,7 +642,7 @@ RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double
 
     {
       std::lock_guard<std::mutex> lock(_runtimeMutex);
-      self.runtime->applyInstructions(batch);
+      if (self.runtime != nullptr) self.runtime->applyInstructions(batch);
     }
     return;
   }
@@ -569,7 +650,7 @@ RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double
   // Cold path: engine not yet initialized. Dispatch to main thread to
   // avoid AURemoteIO::Cleanup RPC timeout when accessing AVAudioEngine.
   dispatch_async(dispatch_get_main_queue(), ^{
-    if (![self initializeAudioEngineIfNeeded] || self.runtime == nullptr) return;
+    if (![self initializeAudioEngineIfNeeded]) return;
 
     // Native integrations apply renderer instruction batches via Runtime::applyInstructions:
     // https://www.elementary.audio/docs/guides/Native_Integrations#applyinstructions
@@ -585,7 +666,7 @@ RCT_EXPORT_METHOD(setProperty:(double)nodeHash key:(NSString *)key value:(double
 
     {
       std::lock_guard<std::mutex> lock(self->_runtimeMutex);
-      self.runtime->applyInstructions(batch);
+      if (self.runtime != nullptr) self.runtime->applyInstructions(batch);
     }
   });
 }
@@ -618,11 +699,6 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
 {
   [self dispatchMainWithEngineInit:^{
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-      if (self.runtime == nullptr) {
-        reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
-        return;
-      }
-
       std::string keyStr = [key UTF8String];
       std::string filePathStr = [filePath UTF8String];
 
@@ -645,12 +721,20 @@ RCT_EXPORT_METHOD(loadAudioResource:(NSString *)key
         numChannels,
         numSamples
       );
-      bool added;
+      bool runtimeReady;
+      bool added = false;
       {
         std::lock_guard<std::mutex> lock(self->_runtimeMutex);
-        added = self.runtime->addSharedResource(keyStr, std::move(resource));
+        runtimeReady = self.runtime != nullptr;
+        if (runtimeReady) {
+          added = self.runtime->addSharedResource(keyStr, std::move(resource));
+        }
       }
 
+      if (!runtimeReady) {
+        reject(@"E_RUNTIME_NOT_INITIALIZED", @"Audio runtime not initialized", nil);
+        return;
+      }
       if (!added) {
         reject(@"E_KEY_EXISTS", [NSString stringWithFormat:@"Resource with key '%@' already exists", key], nil);
         return;
@@ -686,7 +770,7 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
   // unloadAudioResource does not require the audio engine to be running.
   // If the engine was never initialized, there are no resources to unload —
   // resolve immediately with NO without touching AVAudioEngine.
-  if (!self.audioEngineInitialized || self.runtime == nullptr) {
+  if (!self.audioEngineInitialized) {
     resolve(@(NO));
     return;
   }
@@ -706,7 +790,7 @@ RCT_EXPORT_METHOD(unloadAudioResource:(NSString *)key
     if (found) {
       {
         std::lock_guard<std::mutex> lock(self->_runtimeMutex);
-        self.runtime->pruneSharedResources();
+        if (self.runtime != nullptr) self.runtime->pruneSharedResources();
       }
     }
 

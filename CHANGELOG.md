@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **ios:** Prime the Simulator audio route before cold engine startup and reject unusable output formats.
+- **ios:** Adapt variable-size host callbacks to fixed DSP blocks, preserving feedback history and preventing buffer overruns. Carry-over can add up to one runtime block of latency.
+- **ios:** Serialize runtime event collection with graph updates and route replacement; deliver events after unlocking so listeners can safely re-enter.
+- **ios:** Keep `getAudioInfo` status-only: before initialization it returns zero channels/sample rate and false readiness/running flags without starting audio.
+
 ## 0.4.1-beta.2
 
 ### Features
