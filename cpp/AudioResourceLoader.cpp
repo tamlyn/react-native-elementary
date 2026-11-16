@@ -3,8 +3,8 @@
 
 namespace elementary {
 
-    AudioLoadResult AudioResourceLoader::loadFile(const std::string& key, const std::string& filePath) {
-        AudioLoadResult result;
+    AudioLoadResult AudioResourceLoader::loadFile(const std::string& key, const std::string& filePath, bool boundedReadback) {
+        AudioLoadResult result{};
         result.success = false;
         result.info.key = key;
 
@@ -27,6 +27,16 @@ namespace elementary {
 
         uint32_t channels = decoder.outputChannels;
         uint32_t sampleRate = decoder.outputSampleRate;
+
+        // Enforce import limits before allocating decoded PCM (compressed files
+        // can be tiny but expand to hours of audio). Ordinary VFS loads are unchanged.
+        if (boundedReadback && (channels < 1 || channels > 2 || sampleRate < 8000 || sampleRate > 192000
+            || totalFrames == 0 || totalFrames > uint64_t(sampleRate) * 60
+            || totalFrames > (32 * 1024 * 1024 / sizeof(float)) / channels)) {
+            result.error = "Audio must be mono/stereo, 60 seconds or shorter, and fit within 32 MiB decoded PCM";
+            ma_decoder_uninit(&decoder);
+            return result;
+        }
 
         std::vector<float> interleavedData(totalFrames * channels);
         ma_uint64 framesRead;

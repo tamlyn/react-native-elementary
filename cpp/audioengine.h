@@ -3,6 +3,7 @@
 
 #include "../cpp/vendor/elementary/runtime/elem/Runtime.h"
 #include "AudioResourceLoader.h"
+#include "PCMReadbackStore.h"
 #include "miniaudio.h"
 #include <atomic>
 #include <mutex>
@@ -91,7 +92,8 @@ namespace elementary {
             void startDevice();
 
             // VFS / Audio Resource methods
-            AudioLoadResult loadAudioResource(const std::string& key, const std::string& filePath);
+            AudioLoadResult loadAudioResource(const std::string& key, const std::string& filePath, bool readback = false);
+            PCMReadbackStore pcmReadback;
             bool unloadAudioResource(const std::string& key);
 
         private:

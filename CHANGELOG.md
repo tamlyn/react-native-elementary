@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Features
+
+- Add bounded PCM readback for native WAV, MP3 and FLAC imports through `loadAudioResourceForReadback` and `readAudioResourcePCM`. Ordinary VFS loading remains unchanged; M4A/AAC is not supported.
+
 ## 0.4.1-beta.4
 
 ### Bug Fixes

@@ -59,6 +59,16 @@ public class ElementaryTurboModule extends NativeElementarySpec {
     }
 
     @Override
+    public void loadAudioResourceForReadback(String key, String filePath, Promise promise) {
+        module.loadAudioResourceForReadback(key, filePath, promise);
+    }
+
+    @Override
+    public void readAudioResourcePCM(String key, double startFrame, double frameCount, Promise promise) {
+        module.readAudioResourcePCM(key, startFrame, frameCount, promise);
+    }
+
+    @Override
     public void unloadAudioResource(String key, Promise promise) {
         module.unloadAudioResource(key, promise);
     }

@@ -109,7 +109,24 @@ export function loadAudioResource(
   return ElementaryModule.loadAudioResource(key, filePath);
 }
 
-/** Unload an audio resource from the VFS */
+/** Decode WAV/MP3/FLAC with import limits; retain PCM until unloadAudioResource. */
+export function loadAudioResourceForReadback(
+  key: string,
+  filePath: string
+): Promise<AudioResourceInfo> {
+  return ElementaryModule.loadAudioResourceForReadback(key, filePath);
+}
+
+/** Read interleaved PCM from a readback load, in chunks of at most 16384 frames. */
+export function readAudioResourcePCM(
+  key: string,
+  startFrame: number,
+  frameCount: number
+): Promise<number[]> {
+  return ElementaryModule.readAudioResourcePCM(key, startFrame, frameCount);
+}
+
+/** Release an audio resource and any retained PCM readback data. */
 export function unloadAudioResource(key: string): Promise<boolean> {
   return ElementaryModule.unloadAudioResource(key);
 }
